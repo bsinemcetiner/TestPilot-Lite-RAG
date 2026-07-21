@@ -548,3 +548,22 @@ h1 {
     width: 100%;
   }
 }
+
+.history-item-clickable {
+  cursor: pointer;
+  transition:
+    transform 150ms ease,
+    border-color 150ms ease,
+    background 150ms ease;
+}
+
+.history-item-clickable:hover {
+  transform: translateY(-2px);
+  border-color: rgba(59, 130, 246, 0.6);
+  background: rgba(59, 130, 246, 0.05);
+}
+
+.history-item-clickable:focus-visible {
+  outline: 2px solid #3b82f6;
+  outline-offset: 2px;
+}

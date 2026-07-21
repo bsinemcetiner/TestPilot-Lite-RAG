@@ -225,6 +225,25 @@ function GenerateTests() {
     setHistoryItemToDelete(null);
   };
 
+  const handleViewHistoryItem = (item: GenerationHistoryItem) => {
+    if (!item.response) {
+      setError(
+        "This older history item does not contain the full generated result.",
+      );
+      return;
+    }
+
+    setResults(item.response);
+    setOutputFormat(item.outputFormat);
+
+    setTimeout(() => {
+      document.getElementById("generated-results")?.scrollIntoView({
+        behavior: "smooth",
+        block: "start",
+      });
+    }, 100);
+  };
+
   const handleTogglePin = (id: string) => {
     const nextHistory = history.map((item) =>
       item.id === id ? { ...item, isPinned: !item.isPinned } : item,
@@ -403,7 +422,24 @@ function GenerateTests() {
           {filteredHistory.length > 0 ? (
             <div className="history-list">
               {filteredHistory.map((item) => (
-                <div key={item.id} className="history-item">
+                <div
+                  key={item.id}
+                  className={`history-item ${
+                    item.response ? "history-item-clickable" : ""
+                  }`}
+                  onClick={() => handleViewHistoryItem(item)}
+                  role={item.response ? "button" : undefined}
+                  tabIndex={item.response ? 0 : undefined}
+                  onKeyDown={(event) => {
+                    if (
+                      item.response &&
+                      (event.key === "Enter" || event.key === " ")
+                    ) {
+                      event.preventDefault();
+                      handleViewHistoryItem(item);
+                    }
+                  }}
+                >
                   <div className="history-item-header">
                     <div className="history-meta">
                       <strong>{item.feature}</strong>
@@ -421,7 +457,10 @@ function GenerateTests() {
                         className={`history-pin-button ${
                           item.isPinned ? "history-pin-button-active" : ""
                         }`}
-                        onClick={() => handleTogglePin(item.id)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          handleTogglePin(item.id);
+                        }}
                         aria-label={
                           item.isPinned
                             ? `Unpin ${item.feature}`
@@ -437,7 +476,10 @@ function GenerateTests() {
                       <button
                         type="button"
                         className="history-delete-button"
-                        onClick={() => setHistoryItemToDelete(item)}
+                        onClick={(event) => {
+                          event.stopPropagation();
+                          setHistoryItemToDelete(item);
+                        }}
                         aria-label={`Delete ${item.feature} from history`}
                         title="Delete generation"
                       >
