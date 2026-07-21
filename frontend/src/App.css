@@ -509,3 +509,42 @@ h1 {
   color: #f59e0b;
   background: rgba(245, 158, 11, 0.12);
 }
+
+.duplicate-modal {
+  width: min(560px, 100%);
+}
+
+.duplicate-details {
+  margin-top: 18px;
+  padding: 14px 16px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 10px;
+  background: rgba(148, 163, 184, 0.08);
+}
+
+.duplicate-details p {
+  margin: 4px 0;
+}
+
+.duplicate-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 28px;
+}
+
+.duplicate-modal-actions button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+@media (max-width: 600px) {
+  .duplicate-modal-actions {
+    flex-direction: column-reverse;
+  }
+
+  .duplicate-modal-actions button {
+    width: 100%;
+  }
+}

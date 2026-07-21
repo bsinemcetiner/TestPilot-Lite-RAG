@@ -1,3 +1,4 @@
+import DuplicateWarningModal from "../components/DuplicateWarningModal";
 import ConfirmModal from "../components/ConfirmModal";
 import { useEffect, useState, FormEvent } from "react";
 import {
@@ -15,6 +16,9 @@ const testTypeOptions = [
 ];
 const outputFormats = ["json", "markdown", "csv", "gherkin"];
 
+const normalizeText = (value: string) =>
+  value.trim().toLowerCase().replace(/\s+/g, " ");
+
 type GenerationHistoryItem = {
   id: string;
   feature: string;
@@ -26,6 +30,13 @@ type GenerationHistoryItem = {
   preview: string;
   isPinned?: boolean;
   response?: GenerationResponse;
+};
+
+type GenerationRequest = {
+  featureName: string;
+  query: string;
+  outputFormat: string;
+  provider: string;
 };
 
 function GenerateTests() {
@@ -47,6 +58,11 @@ function GenerateTests() {
   const [historySearch, setHistorySearch] = useState("");
   const [historyItemToDelete, setHistoryItemToDelete] =
     useState<GenerationHistoryItem | null>(null);
+  const [duplicateItem, setDuplicateItem] =
+    useState<GenerationHistoryItem | null>(null);
+
+  const [pendingGeneration, setPendingGeneration] =
+    useState<GenerationRequest | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("testpilot-history");
@@ -99,38 +115,82 @@ function GenerateTests() {
     );
   };
 
-  const handleSubmit = async (e: FormEvent) => {
-    e.preventDefault();
+  const executeGeneration = async (request: GenerationRequest) => {
     setLoading(true);
     setError("");
     setResults(null);
 
     try {
+      const response = await generateTestCases(
+        request.featureName,
+        request.query,
+        selectedTypes,
+        numCases,
+        request.outputFormat,
+        request.provider,
+      );
+
+      setResults(response);
+      saveHistory(response, request);
+
+      setTimeout(() => {
+        document.getElementById("generated-results")?.scrollIntoView({
+          behavior: "smooth",
+          block: "start",
+        });
+      }, 100);
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Generation failed";
+
+      setError(message);
+    } finally {
+      setLoading(false);
+      setPendingGeneration(null);
+      setDuplicateItem(null);
+    }
+  };
+
+  const handleSubmit = async (e: FormEvent) => {
+    e.preventDefault();
+    setError("");
+
+    try {
       if (!featureName.trim()) {
         throw new Error("Feature name is required");
       }
+
       if (!query.trim()) {
         throw new Error("Query is required");
       }
+
       if (selectedTypes.length === 0) {
         throw new Error("Select at least one test type");
       }
 
-      const response = await generateTestCases(
-        featureName,
-        query,
-        selectedTypes,
-        numCases,
+      const request: GenerationRequest = {
+        featureName: featureName.trim(),
+        query: query.trim(),
         outputFormat,
         provider,
+      };
+
+      const duplicate = history.find(
+        (item) =>
+          normalizeText(item.feature) === normalizeText(request.featureName) &&
+          normalizeText(item.query) === normalizeText(request.query),
       );
-      setResults(response);
-      saveHistory(response, { featureName, query, outputFormat, provider });
+
+      if (duplicate) {
+        setPendingGeneration(request);
+        setDuplicateItem(duplicate);
+        return;
+      }
+
+      await executeGeneration(request);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
+
       setError(message);
-    } finally {
-      setLoading(false);
     }
   };
 
@@ -404,7 +464,7 @@ function GenerateTests() {
       )}
 
       {results && (
-        <div className="card">
+        <div className="card" id="generated-results">
           <h2 className="section-title">
             Generated Test Cases ({results.count})
           </h2>
@@ -564,6 +624,42 @@ function GenerateTests() {
           if (historyItemToDelete) {
             handleDeleteHistoryItem(historyItemToDelete.id);
           }
+        }}
+      />
+
+      <DuplicateWarningModal
+        isOpen={duplicateItem !== null}
+        feature={duplicateItem?.feature ?? ""}
+        createdAt={duplicateItem?.createdAt ?? ""}
+        canViewPrevious={Boolean(duplicateItem?.response)}
+        onCancel={() => {
+          setDuplicateItem(null);
+          setPendingGeneration(null);
+        }}
+        onViewPrevious={() => {
+          if (!duplicateItem?.response) return;
+
+          setResults(duplicateItem.response);
+          setOutputFormat(duplicateItem.outputFormat);
+          setDuplicateItem(null);
+          setPendingGeneration(null);
+
+          setTimeout(() => {
+            document.getElementById("generated-results")?.scrollIntoView({
+              behavior: "smooth",
+              block: "start",
+            });
+          }, 100);
+        }}
+        onGenerateAnyway={() => {
+          if (!pendingGeneration) return;
+
+          const request = pendingGeneration;
+
+          setDuplicateItem(null);
+          setPendingGeneration(null);
+
+          executeGeneration(request);
         }}
       />
     </div>
