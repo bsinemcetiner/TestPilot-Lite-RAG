@@ -1,0 +1,11 @@
+fastapi
+uvicorn[standard]
+pydantic
+pydantic-settings
+sqlalchemy
+python-multipart
+sentence-transformers
+chromadb
+numpy
+openai
+requests
