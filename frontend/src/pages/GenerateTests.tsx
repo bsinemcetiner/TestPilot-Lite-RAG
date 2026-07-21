@@ -24,6 +24,8 @@ type GenerationHistoryItem = {
   count: number;
   createdAt: string;
   preview: string;
+  isPinned?: boolean;
+  response?: GenerationResponse;
 };
 
 function GenerateTests() {
@@ -85,9 +87,11 @@ function GenerateTests() {
       count: response.count,
       createdAt: new Date().toISOString(),
       preview: response.formatted.slice(0, 120),
+      isPinned: false,
+      response,
     };
 
-    const nextHistory = [entry, ...history].slice(0, 5);
+    const nextHistory = [entry, ...history].slice(0, 20);
     setHistory(nextHistory);
     window.localStorage.setItem(
       "testpilot-history",
@@ -161,20 +165,40 @@ function GenerateTests() {
     setHistoryItemToDelete(null);
   };
 
-  const filteredHistory = history.filter((item) => {
-    const searchTerm = historySearch.trim().toLowerCase();
-
-    if (!searchTerm) {
-      return true;
-    }
-
-    return (
-      item.feature.toLowerCase().includes(searchTerm) ||
-      item.query.toLowerCase().includes(searchTerm) ||
-      item.provider.toLowerCase().includes(searchTerm) ||
-      item.outputFormat.toLowerCase().includes(searchTerm)
+  const handleTogglePin = (id: string) => {
+    const nextHistory = history.map((item) =>
+      item.id === id ? { ...item, isPinned: !item.isPinned } : item,
     );
-  });
+
+    setHistory(nextHistory);
+    window.localStorage.setItem(
+      "testpilot-history",
+      JSON.stringify(nextHistory),
+    );
+  };
+
+  const filteredHistory = history
+    .filter((item) => {
+      const searchTerm = historySearch.trim().toLowerCase();
+
+      if (!searchTerm) {
+        return true;
+      }
+
+      return (
+        item.feature.toLowerCase().includes(searchTerm) ||
+        item.query.toLowerCase().includes(searchTerm) ||
+        item.provider.toLowerCase().includes(searchTerm) ||
+        item.outputFormat.toLowerCase().includes(searchTerm)
+      );
+    })
+    .sort((a, b) => {
+      if (Boolean(a.isPinned) !== Boolean(b.isPinned)) {
+        return Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned));
+      }
+
+      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+    });
 
   return (
     <div>
@@ -331,15 +355,35 @@ function GenerateTests() {
                       </span>
                     </div>
 
-                    <button
-                      type="button"
-                      className="history-delete-button"
-                      onClick={() => setHistoryItemToDelete(item)}
-                      aria-label={`Delete ${item.feature} from history`}
-                      title="Delete generation"
-                    >
-                      Delete
-                    </button>
+                    <div className="history-item-actions">
+                      <button
+                        type="button"
+                        className={`history-pin-button ${
+                          item.isPinned ? "history-pin-button-active" : ""
+                        }`}
+                        onClick={() => handleTogglePin(item.id)}
+                        aria-label={
+                          item.isPinned
+                            ? `Unpin ${item.feature}`
+                            : `Pin ${item.feature}`
+                        }
+                        title={
+                          item.isPinned ? "Unpin generation" : "Pin generation"
+                        }
+                      >
+                        {item.isPinned ? "★" : "☆"}
+                      </button>
+
+                      <button
+                        type="button"
+                        className="history-delete-button"
+                        onClick={() => setHistoryItemToDelete(item)}
+                        aria-label={`Delete ${item.feature} from history`}
+                        title="Delete generation"
+                      >
+                        Delete
+                      </button>
+                    </div>
                   </div>
 
                   <p>{item.query}</p>
