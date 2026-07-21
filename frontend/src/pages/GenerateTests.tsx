@@ -1,3 +1,4 @@
+import ConfirmModal from "../components/ConfirmModal";
 import { useEffect, useState, FormEvent } from "react";
 import {
   generateTestCases,
@@ -42,6 +43,8 @@ function GenerateTests() {
   const [results, setResults] = useState<GenerationResponse | null>(null);
   const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
   const [historySearch, setHistorySearch] = useState("");
+  const [historyItemToDelete, setHistoryItemToDelete] =
+    useState<GenerationHistoryItem | null>(null);
 
   useEffect(() => {
     const stored = window.localStorage.getItem("testpilot-history");
@@ -144,6 +147,18 @@ function GenerateTests() {
     const timestamp = new Date().toISOString().slice(0, 10);
     const filename = `test_cases_${results.feature}_${timestamp}.${format}`;
     downloadFile(results.formatted, filename, "text/plain");
+  };
+
+  const handleDeleteHistoryItem = (id: string) => {
+    const nextHistory = history.filter((item) => item.id !== id);
+
+    setHistory(nextHistory);
+    window.localStorage.setItem(
+      "testpilot-history",
+      JSON.stringify(nextHistory),
+    );
+
+    setHistoryItemToDelete(null);
   };
 
   const filteredHistory = history.filter((item) => {
@@ -305,12 +320,26 @@ function GenerateTests() {
             <div className="history-list">
               {filteredHistory.map((item) => (
                 <div key={item.id} className="history-item">
-                  <div className="history-meta">
-                    <strong>{item.feature}</strong>
-                    <span className="pill">
-                      {item.outputFormat.toUpperCase()}
-                    </span>
-                    <span className="pill">{item.provider.toUpperCase()}</span>
+                  <div className="history-item-header">
+                    <div className="history-meta">
+                      <strong>{item.feature}</strong>
+                      <span className="pill">
+                        {item.outputFormat.toUpperCase()}
+                      </span>
+                      <span className="pill">
+                        {item.provider.toUpperCase()}
+                      </span>
+                    </div>
+
+                    <button
+                      type="button"
+                      className="history-delete-button"
+                      onClick={() => setHistoryItemToDelete(item)}
+                      aria-label={`Delete ${item.feature} from history`}
+                      title="Delete generation"
+                    >
+                      Delete
+                    </button>
                   </div>
 
                   <p>{item.query}</p>
@@ -478,6 +507,21 @@ function GenerateTests() {
           )}
         </div>
       )}
+
+      <ConfirmModal
+        isOpen={historyItemToDelete !== null}
+        title="Delete Generation"
+        message="Are you sure you want to remove this generation from your history?"
+        warning="This action cannot be undone."
+        confirmText="Delete"
+        cancelText="Cancel"
+        onCancel={() => setHistoryItemToDelete(null)}
+        onConfirm={() => {
+          if (historyItemToDelete) {
+            handleDeleteHistoryItem(historyItemToDelete.id);
+          }
+        }}
+      />
     </div>
   );
 }
