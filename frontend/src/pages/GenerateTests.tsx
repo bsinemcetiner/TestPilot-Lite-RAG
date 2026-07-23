@@ -1,11 +1,27 @@
 import DuplicateWarningModal from "../components/DuplicateWarningModal";
-import ConfirmModal from "../components/ConfirmModal";
-import { useEffect, useState, FormEvent } from "react";
+import { useEffect, useState } from "react";
+import type { FormEvent } from "react";
 import {
-  generateTestCases,
-  getProviders,
-  GenerationResponse,
-} from "../api/apiClient";
+  Braces,
+  CheckCircle2,
+  FileOutput,
+  Info,
+  Layers3,
+  LoaderCircle,
+  Search,
+  Settings2,
+  ShieldCheck,
+} from "lucide-react";
+import { generateTestCases, getProviders } from "../api/apiClient";
+
+import type { GenerationResponse } from "../api/apiClient";
+
+import {
+  readGenerationHistory,
+  writeGenerationHistory,
+} from "../types/generationHistory";
+
+import type { GenerationHistoryItem } from "../types/generationHistory";
 
 const testTypeOptions = [
   "Positive",
@@ -19,19 +35,6 @@ const outputFormats = ["json", "markdown", "csv", "gherkin"];
 const normalizeText = (value: string) =>
   value.trim().toLowerCase().replace(/\s+/g, " ");
 
-type GenerationHistoryItem = {
-  id: string;
-  feature: string;
-  query: string;
-  outputFormat: string;
-  provider: string;
-  count: number;
-  createdAt: string;
-  preview: string;
-  isPinned?: boolean;
-  response?: GenerationResponse;
-};
-
 type GenerationRequest = {
   featureName: string;
   query: string;
@@ -39,7 +42,29 @@ type GenerationRequest = {
   provider: string;
 };
 
-function GenerateTests() {
+function InfoTooltip({ text }: { text: string }) {
+  return (
+    <span className="info-tooltip">
+      <button
+        type="button"
+        className="info-tooltip-trigger"
+        aria-label="Show information"
+      >
+        <Info size={15} />
+      </button>
+
+      <span className="info-tooltip-content" role="tooltip">
+        {text}
+      </span>
+    </span>
+  );
+}
+
+type GenerateTestsProps = {
+  onOpenResults: (historyId?: string) => void;
+};
+
+function GenerateTests({ onOpenResults }: GenerateTestsProps) {
   const [featureName, setFeatureName] = useState("");
   const [query, setQuery] = useState("");
   const [selectedTypes, setSelectedTypes] = useState<string[]>([
@@ -53,26 +78,18 @@ function GenerateTests() {
   const [providerOptions, setProviderOptions] = useState<string[]>(["mock"]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
-  const [results, setResults] = useState<GenerationResponse | null>(null);
+
   const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
-  const [historySearch, setHistorySearch] = useState("");
-  const [historyItemToDelete, setHistoryItemToDelete] =
-    useState<GenerationHistoryItem | null>(null);
+
   const [duplicateItem, setDuplicateItem] =
     useState<GenerationHistoryItem | null>(null);
+  const [showPageHelp, setShowPageHelp] = useState(false);
 
   const [pendingGeneration, setPendingGeneration] =
     useState<GenerationRequest | null>(null);
 
   useEffect(() => {
-    const stored = window.localStorage.getItem("testpilot-history");
-    if (stored) {
-      try {
-        setHistory(JSON.parse(stored));
-      } catch {
-        window.localStorage.removeItem("testpilot-history");
-      }
-    }
+    setHistory(readGenerationHistory());
 
     getProviders()
       .then(setProviderOptions)
@@ -87,12 +104,7 @@ function GenerateTests() {
 
   const saveHistory = (
     response: GenerationResponse,
-    request: {
-      featureName: string;
-      query: string;
-      outputFormat: string;
-      provider: string;
-    },
+    request: GenerationRequest,
   ) => {
     const entry: GenerationHistoryItem = {
       id: `${Date.now()}`,
@@ -107,18 +119,19 @@ function GenerateTests() {
       response,
     };
 
-    const nextHistory = [entry, ...history].slice(0, 20);
+    const currentHistory = readGenerationHistory();
+
+    const nextHistory = [entry, ...currentHistory].slice(0, 20);
+
     setHistory(nextHistory);
-    window.localStorage.setItem(
-      "testpilot-history",
-      JSON.stringify(nextHistory),
-    );
+    writeGenerationHistory(nextHistory);
+
+    return entry;
   };
 
   const executeGeneration = async (request: GenerationRequest) => {
     setLoading(true);
     setError("");
-    setResults(null);
 
     try {
       const response = await generateTestCases(
@@ -130,15 +143,9 @@ function GenerateTests() {
         request.provider,
       );
 
-      setResults(response);
-      saveHistory(response, request);
+      const savedEntry = saveHistory(response, request);
 
-      setTimeout(() => {
-        document.getElementById("generated-results")?.scrollIntoView({
-          behavior: "smooth",
-          block: "start",
-        });
-      }, 100);
+      onOpenResults(savedEntry.id);
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
 
@@ -194,480 +201,293 @@ function GenerateTests() {
     }
   };
 
-  const downloadFile = (content: string, filename: string, type: string) => {
-    const blob = new Blob([content], { type });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
-  };
-
-  const handleExport = (format: string) => {
-    if (!results) return;
-    const timestamp = new Date().toISOString().slice(0, 10);
-    const filename = `test_cases_${results.feature}_${timestamp}.${format}`;
-    downloadFile(results.formatted, filename, "text/plain");
-  };
-
-  const handleDeleteHistoryItem = (id: string) => {
-    const nextHistory = history.filter((item) => item.id !== id);
-
-    setHistory(nextHistory);
-    window.localStorage.setItem(
-      "testpilot-history",
-      JSON.stringify(nextHistory),
-    );
-
-    setHistoryItemToDelete(null);
-  };
-
-  const handleViewHistoryItem = (item: GenerationHistoryItem) => {
-    if (!item.response) {
-      setError(
-        "This older history item does not contain the full generated result.",
-      );
-      return;
-    }
-
-    setResults(item.response);
-    setOutputFormat(item.outputFormat);
-
-    setTimeout(() => {
-      document.getElementById("generated-results")?.scrollIntoView({
-        behavior: "smooth",
-        block: "start",
-      });
-    }, 100);
-  };
-
-  const handleTogglePin = (id: string) => {
-    const nextHistory = history.map((item) =>
-      item.id === id ? { ...item, isPinned: !item.isPinned } : item,
-    );
-
-    setHistory(nextHistory);
-    window.localStorage.setItem(
-      "testpilot-history",
-      JSON.stringify(nextHistory),
-    );
-  };
-
-  const filteredHistory = history
-    .filter((item) => {
-      const searchTerm = historySearch.trim().toLowerCase();
-
-      if (!searchTerm) {
-        return true;
-      }
-
-      return (
-        item.feature.toLowerCase().includes(searchTerm) ||
-        item.query.toLowerCase().includes(searchTerm) ||
-        item.provider.toLowerCase().includes(searchTerm) ||
-        item.outputFormat.toLowerCase().includes(searchTerm)
-      );
-    })
-    .sort((a, b) => {
-      if (Boolean(a.isPinned) !== Boolean(b.isPinned)) {
-        return Number(Boolean(b.isPinned)) - Number(Boolean(a.isPinned));
-      }
-
-      return new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
-    });
-
   return (
-    <div>
-      <h1 className="section-title">Generate Test Cases</h1>
+    <div className="page-stack generate-page">
+      <header className="page-header">
+        <div>
+          <p className="eyebrow">Test Generation</p>
 
-      <div className="card">
-        <form onSubmit={handleSubmit}>
-          <div className="form-row">
-            <label>
-              Feature/Module Name
-              <input
-                type="text"
-                value={featureName}
-                onChange={(e) => setFeatureName(e.target.value)}
-                placeholder="e.g., Login, Password Reset, Payment"
-                disabled={loading}
-              />
-            </label>
+          <div className="title-with-info">
+            <h1>Generate Test Cases</h1>
+
+            <InfoTooltip text="Generate structured test cases using requirements retrieved from your indexed project documents." />
           </div>
 
-          <div className="form-row">
-            <label>
-              Query/Description
+          <p className="page-description">
+            Select a feature, describe the scenarios you need and generate
+            requirement-based test cases using the indexed knowledge base.
+          </p>
+
+          <div className="page-help-wrapper">
+            <button
+              type="button"
+              className="page-help-button"
+              onClick={() => setShowPageHelp((current) => !current)}
+              aria-expanded={showPageHelp}
+            >
+              <Info size={16} />
+              How generation works
+            </button>
+
+            {showPageHelp && (
+              <div className="page-help-panel">
+                <p>
+                  The system searches indexed documents for requirements related
+                  to the feature name and description. It then creates the
+                  selected test types, formats the output and evaluates
+                  coverage, completeness and groundedness.
+                </p>
+              </div>
+            )}
+          </div>
+        </div>
+      </header>
+
+      <section className="card generation-form-card">
+        <div className="card-heading-row">
+          <div>
+            <p className="eyebrow">Generation request</p>
+            <h2>Configure the test scenarios</h2>
+            <p className="card-description">
+              Provide enough feature context for accurate document retrieval and
+              scenario generation.
+            </p>
+          </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="modern-generation-form">
+          <section className="generation-form-section">
+            <div className="generation-section-heading">
+              <span className="generation-section-icon">
+                <Search size={19} />
+              </span>
+
+              <div>
+                <h3>Feature information</h3>
+                <p>
+                  Tell the system which product feature should be matched with
+                  indexed requirements.
+                </p>
+              </div>
+            </div>
+
+            <div className="generation-fields-grid">
+              <label className="field-group">
+                <span className="field-label">
+                  Feature or module name
+                  <InfoTooltip text="This value is used to retrieve chunks belonging to the requested feature. It should match the feature name in your indexed document." />
+                </span>
+
+                <input
+                  type="text"
+                  value={featureName}
+                  onChange={(event) => setFeatureName(event.target.value)}
+                  placeholder="e.g. User Registration"
+                  disabled={loading}
+                />
+
+                <span className="field-hint">
+                  Use the same feature name found in the source document.
+                </span>
+              </label>
+
+              <label className="field-group">
+                <span className="field-label">
+                  Number of test cases
+                  <InfoTooltip text="Choose how many test cases should be generated. The supported range is 1 to 20." />
+                </span>
+
+                <div className="number-input-wrapper">
+                  <input
+                    type="number"
+                    value={numCases}
+                    onChange={(event) =>
+                      setNumCases(
+                        Math.min(
+                          20,
+                          Math.max(1, parseInt(event.target.value) || 1),
+                        ),
+                      )
+                    }
+                    min="1"
+                    max="20"
+                    disabled={loading}
+                  />
+
+                  <span>1–20 cases</span>
+                </div>
+              </label>
+            </div>
+
+            <label className="field-group">
+              <span className="field-label">
+                Query or description
+                <InfoTooltip text="Describe the scenarios you need. The query is combined with the feature name when searching the indexed documents." />
+              </span>
+
               <textarea
                 rows={5}
                 value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Describe what test cases you need. This will search indexed documents for relevant content."
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Describe the required scenarios, test focus and expected coverage..."
                 disabled={loading}
               />
+
+              <span className="field-hint">
+                Example: Generate comprehensive test cases based only on the
+                retrieved registration requirements.
+              </span>
             </label>
-          </div>
+          </section>
 
-          <div className="form-row">
-            <label>
-              Test Types
-              <div className="checkbox-group">
-                {testTypeOptions.map((type) => (
-                  <label key={type} className="checkbox-label">
-                    <input
-                      type="checkbox"
-                      checked={selectedTypes.includes(type)}
-                      onChange={() => toggleTestType(type)}
-                      disabled={loading}
-                    />
-                    {type}
-                  </label>
-                ))}
-              </div>
-            </label>
-          </div>
+          <section className="generation-form-section">
+            <div className="generation-section-heading">
+              <span className="generation-section-icon">
+                <Layers3 size={19} />
+              </span>
 
-          <div className="form-row">
-            <label>
-              Number of Test Cases
-              <input
-                type="number"
-                value={numCases}
-                onChange={(e) =>
-                  setNumCases(Math.max(1, parseInt(e.target.value) || 1))
-                }
-                min="1"
-                max="20"
-                disabled={loading}
-              />
-            </label>
-            <label>
-              Output Format
-              <select
-                value={outputFormat}
-                onChange={(e) => setOutputFormat(e.target.value)}
-                disabled={loading}
-              >
-                {outputFormats.map((fmt) => (
-                  <option key={fmt} value={fmt}>
-                    {fmt.toUpperCase()}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              LLM Provider
-              <select
-                value={provider}
-                onChange={(e) => setProvider(e.target.value)}
-                disabled={loading}
-              >
-                {providerOptions.map((option) => (
-                  <option key={option} value={option}>
-                    {option
-                      .replace("_", " ")
-                      .replace(/\b\w/g, (c) => c.toUpperCase())}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-
-          <div className="form-row">
-            <button type="submit" disabled={loading} className="btn-primary">
-              {loading ? "Generating..." : "Generate Test Cases"}
-            </button>
-          </div>
-        </form>
-
-        {error && <div className="error-message">{error}</div>}
-      </div>
-
-      {history.length > 0 && (
-        <div className="card">
-          <div className="history-header">
-            <div>
-              <h2 className="section-title">Recent Generations</h2>
-              <p className="history-count">
-                {filteredHistory.length} of {history.length} generations
-              </p>
-            </div>
-
-            <div className="history-search-wrapper">
-              <input
-                type="search"
-                value={historySearch}
-                onChange={(e) => setHistorySearch(e.target.value)}
-                placeholder="Search history..."
-                className="history-search"
-                aria-label="Search generation history"
-              />
-
-              {historySearch && (
-                <button
-                  type="button"
-                  className="history-search-clear"
-                  onClick={() => setHistorySearch("")}
-                  aria-label="Clear history search"
-                >
-                  ×
-                </button>
-              )}
-            </div>
-          </div>
-
-          {filteredHistory.length > 0 ? (
-            <div className="history-list">
-              {filteredHistory.map((item) => (
-                <div
-                  key={item.id}
-                  className={`history-item ${
-                    item.response ? "history-item-clickable" : ""
-                  }`}
-                  onClick={() => handleViewHistoryItem(item)}
-                  role={item.response ? "button" : undefined}
-                  tabIndex={item.response ? 0 : undefined}
-                  onKeyDown={(event) => {
-                    if (
-                      item.response &&
-                      (event.key === "Enter" || event.key === " ")
-                    ) {
-                      event.preventDefault();
-                      handleViewHistoryItem(item);
-                    }
-                  }}
-                >
-                  <div className="history-item-header">
-                    <div className="history-meta">
-                      <strong>{item.feature}</strong>
-                      <span className="pill">
-                        {item.outputFormat.toUpperCase()}
-                      </span>
-                      <span className="pill">
-                        {item.provider.toUpperCase()}
-                      </span>
-                    </div>
-
-                    <div className="history-item-actions">
-                      <button
-                        type="button"
-                        className={`history-pin-button ${
-                          item.isPinned ? "history-pin-button-active" : ""
-                        }`}
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          handleTogglePin(item.id);
-                        }}
-                        aria-label={
-                          item.isPinned
-                            ? `Unpin ${item.feature}`
-                            : `Pin ${item.feature}`
-                        }
-                        title={
-                          item.isPinned ? "Unpin generation" : "Pin generation"
-                        }
-                      >
-                        {item.isPinned ? "★" : "☆"}
-                      </button>
-
-                      <button
-                        type="button"
-                        className="history-delete-button"
-                        onClick={(event) => {
-                          event.stopPropagation();
-                          setHistoryItemToDelete(item);
-                        }}
-                        aria-label={`Delete ${item.feature} from history`}
-                        title="Delete generation"
-                      >
-                        Delete
-                      </button>
-                    </div>
-                  </div>
-
-                  <p>{item.query}</p>
-
-                  <small>
-                    {item.count} cases ·{" "}
-                    {new Date(item.createdAt).toLocaleString()}
-                  </small>
-                </div>
-              ))}
-            </div>
-          ) : (
-            <div className="empty-state">
-              No generation history matches “{historySearch}”.
-            </div>
-          )}
-        </div>
-      )}
-
-      {results && (
-        <div className="card" id="generated-results">
-          <h2 className="section-title">
-            Generated Test Cases ({results.count})
-          </h2>
-          <p>
-            <strong>Feature:</strong> {results.feature} |{" "}
-            <strong>Retrieved chunks:</strong> {results.retrieved_chunks}
-          </p>
-          <p>
-            <strong>Provider:</strong> {results.provider.toUpperCase()}
-          </p>
-
-          <div className="export-buttons">
-            {outputFormats.map((fmt) => (
-              <button
-                key={fmt}
-                onClick={() => handleExport(fmt)}
-                className="btn-secondary"
-              >
-                Export as {fmt.toUpperCase()}
-              </button>
-            ))}
-          </div>
-
-          {results.test_cases.length === 0 ? (
-            <div className="empty-state">
-              No test cases were generated. Try broadening the query or adding
-              more documents.
-            </div>
-          ) : (
-            <div className="test-cases-container">
-              {results.test_cases.map((tc) => (
-                <div key={tc.id} className="test-case-card">
-                  <div className="tc-header">
-                    <h3>{tc.title}</h3>
-                    <span className={`badge badge-${tc.type.toLowerCase()}`}>
-                      {tc.type}
-                    </span>
-                    <span
-                      className={`badge badge-priority-${tc.priority.toLowerCase()}`}
-                    >
-                      {tc.priority}
-                    </span>
-                  </div>
-
-                  <div className="tc-section">
-                    <strong>Preconditions:</strong>
-                    <ul>
-                      {tc.preconditions.map((pre, i) => (
-                        <li key={i}>{pre}</li>
-                      ))}
-                    </ul>
-                  </div>
-
-                  <div className="tc-section">
-                    <strong>Test Steps:</strong>
-                    <ol>
-                      {tc.steps.map((step, i) => (
-                        <li key={i}>{step}</li>
-                      ))}
-                    </ol>
-                  </div>
-
-                  <div className="tc-section">
-                    <strong>Expected Result:</strong>
-                    <p>{tc.expected_result}</p>
-                  </div>
-
-                  {tc.source_references.length > 0 && (
-                    <div className="tc-section">
-                      <strong>Source References:</strong>
-                      <ul>
-                        {tc.source_references.map((ref, idx) => (
-                          <li key={idx}>
-                            <strong>{ref.document_name}</strong>
-                            {ref.chunk_id ? ` (${ref.chunk_id})` : ""}
-                            {ref.quote ? ` — ${ref.quote}` : ""}
-                          </li>
-                        ))}
-                      </ul>
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-          )}
-
-          <div className="formatted-output">
-            <h3>Formatted Output ({outputFormat.toUpperCase()})</h3>
-            <pre>{results.formatted}</pre>
-          </div>
-
-          {results.evaluation && (
-            <div className="quality-summary">
-              <h3>Quality Evaluation</h3>
-              <div className="metrics-row">
-                <div className="metric-small">
-                  <div className="metric-label">Coverage</div>
-                  <div className="metric-value-small">
-                    {results.evaluation.coverage_score}%
-                  </div>
-                </div>
-                <div className="metric-small">
-                  <div className="metric-label">Completeness</div>
-                  <div className="metric-value-small">
-                    {results.evaluation.completeness_score}%
-                  </div>
-                </div>
-                <div className="metric-small">
-                  <div className="metric-label">Groundedness</div>
-                  <div className="metric-value-small">
-                    {results.evaluation.groundedness_score}%
-                  </div>
-                </div>
-              </div>
-              <p>
-                <strong>Recommendation:</strong>{" "}
-                {results.evaluation.recommendation}
-              </p>
-              {results.evaluation.issues.length > 0 && (
-                <div>
-                  <strong>
-                    Issues Found ({results.evaluation.issues_found}):
-                  </strong>
-                  <ul>
-                    {results.evaluation.issues.map((issue, i) => (
-                      <li key={i}>{issue}</li>
-                    ))}
-                  </ul>
-                </div>
-              )}
               <div>
-                <strong>Test Type Distribution:</strong>
-                <ul>
-                  {Object.entries(results.evaluation.type_distribution).map(
-                    ([type, count]) => (
-                      <li key={type}>
-                        {type}: {count}
-                      </li>
-                    ),
-                  )}
-                </ul>
+                <h3>Test coverage</h3>
+                <p>
+                  Choose the scenario categories that should appear in the
+                  generated output.
+                </p>
               </div>
             </div>
-          )}
-        </div>
-      )}
 
-      <ConfirmModal
-        isOpen={historyItemToDelete !== null}
-        title="Delete Generation"
-        message="Are you sure you want to remove this generation from your history?"
-        warning="This action cannot be undone."
-        confirmText="Delete"
-        cancelText="Cancel"
-        onCancel={() => setHistoryItemToDelete(null)}
-        onConfirm={() => {
-          if (historyItemToDelete) {
-            handleDeleteHistoryItem(historyItemToDelete.id);
-          }
-        }}
-      />
+            <div className="test-type-grid">
+              {testTypeOptions.map((type) => {
+                const selected = selectedTypes.includes(type);
+
+                return (
+                  <button
+                    key={type}
+                    type="button"
+                    className={`test-type-card ${selected ? "selected" : ""}`}
+                    onClick={() => toggleTestType(type)}
+                    disabled={loading}
+                    aria-pressed={selected}
+                  >
+                    <span className="test-type-check">
+                      {selected ? (
+                        <CheckCircle2 size={18} />
+                      ) : (
+                        <span className="test-type-empty-check" />
+                      )}
+                    </span>
+
+                    <span>
+                      <strong>{type}</strong>
+                      <small>
+                        {type === "Positive" &&
+                          "Expected behavior with valid input"}
+                        {type === "Negative" &&
+                          "Invalid input and rejected actions"}
+                        {type === "Edge Case" &&
+                          "Boundary and unusual conditions"}
+                        {type === "Validation" &&
+                          "Input rules and required fields"}
+                        {type === "Security" &&
+                          "Malicious input and protection checks"}
+                      </small>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </section>
+
+          <section className="generation-form-section">
+            <div className="generation-section-heading">
+              <span className="generation-section-icon">
+                <Settings2 size={19} />
+              </span>
+
+              <div>
+                <h3>Generation settings</h3>
+                <p>
+                  Configure the provider and the format used for the generated
+                  response.
+                </p>
+              </div>
+            </div>
+
+            <div className="generation-settings-grid">
+              <label className="field-group">
+                <span className="field-label">
+                  Output format
+                  <InfoTooltip text="Controls the formatted output displayed and saved with the generation result." />
+                </span>
+
+                <div className="select-with-icon">
+                  <FileOutput size={17} />
+
+                  <select
+                    value={outputFormat}
+                    onChange={(event) => setOutputFormat(event.target.value)}
+                    disabled={loading}
+                  >
+                    {outputFormats.map((formatOption) => (
+                      <option key={formatOption} value={formatOption}>
+                        {formatOption.toUpperCase()}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+
+              <label className="field-group">
+                <span className="field-label">
+                  LLM provider
+                  <InfoTooltip text="Selects the configured provider used to create test cases. The local mock provider works without an external API." />
+                </span>
+
+                <div className="select-with-icon">
+                  <Braces size={17} />
+
+                  <select
+                    value={provider}
+                    onChange={(event) => setProvider(event.target.value)}
+                    disabled={loading}
+                  >
+                    {providerOptions.map((option) => (
+                      <option key={option} value={option}>
+                        {option
+                          .replace("_", " ")
+                          .replace(/\b\w/g, (character) =>
+                            character.toUpperCase(),
+                          )}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+              </label>
+            </div>
+          </section>
+
+          {error && (
+            <div className="generation-error-message" role="alert">
+              <ShieldCheck size={18} />
+              <span>{error}</span>
+            </div>
+          )}
+
+          <button
+            type="submit"
+            disabled={loading}
+            className="btn-primary generate-tests-button"
+          >
+            {loading ? (
+              <>
+                <LoaderCircle className="button-spinner" size={19} />
+                Retrieving requirements and generating tests...
+              </>
+            ) : (
+              <>Generate Test Cases</>
+            )}
+          </button>
+        </form>
+      </section>
 
       <DuplicateWarningModal
         isOpen={duplicateItem !== null}
@@ -681,17 +501,12 @@ function GenerateTests() {
         onViewPrevious={() => {
           if (!duplicateItem?.response) return;
 
-          setResults(duplicateItem.response);
-          setOutputFormat(duplicateItem.outputFormat);
+          const historyId = duplicateItem.id;
+
           setDuplicateItem(null);
           setPendingGeneration(null);
 
-          setTimeout(() => {
-            document.getElementById("generated-results")?.scrollIntoView({
-              behavior: "smooth",
-              block: "start",
-            });
-          }, 100);
+          onOpenResults(historyId);
         }}
         onGenerateAnyway={() => {
           if (!pendingGeneration) return;

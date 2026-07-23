@@ -1,90 +1,274 @@
-import { useEffect, useState } from 'react'
-import { getDocuments, getChunkCount } from '../api/apiClient'
+import { useEffect, useState } from "react";
+import {
+  ArrowRight,
+  CheckCircle2,
+  Database,
+  FileText,
+  FlaskConical,
+  Layers3,
+  UploadCloud,
+} from "lucide-react";
+
+import { getDocuments, getChunkCount } from "../api/apiClient";
 
 function Dashboard() {
-  const [docCount, setDocCount] = useState(0)
-  const [chunkCount, setChunkCount] = useState(0)
-  const [loading, setLoading] = useState(true)
+  const [docCount, setDocCount] = useState(0);
+  const [chunkCount, setChunkCount] = useState(0);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const fetchStats = async () => {
       try {
-        const docs = await getDocuments()
-        setDocCount(docs.length)
+        const docs = await getDocuments();
+        setDocCount(docs.length);
 
-        let totalChunks = 0
-        for (const doc of docs) {
-          const count = await getChunkCount(doc.id)
-          totalChunks += count
-        }
-        setChunkCount(totalChunks)
+        const chunkCounts = await Promise.all(
+          docs.map((doc) => getChunkCount(doc.id)),
+        );
+
+        const totalChunks = chunkCounts.reduce(
+          (total, count) => total + count,
+          0,
+        );
+
+        setChunkCount(totalChunks);
       } catch (error) {
-        console.error('Failed to fetch stats', error)
+        console.error("Failed to fetch dashboard statistics", error);
       } finally {
-        setLoading(false)
+        setLoading(false);
       }
-    }
+    };
 
-    fetchStats()
-  }, [])
+    fetchStats();
+  }, []);
 
   return (
-    <div>
-      <h1 className="section-title">Dashboard</h1>
-
-      <div className="metrics-grid">
-        <div className="metric-card">
-          <div className="metric-label">Documents Indexed</div>
-          <div className="metric-value">{loading ? '...' : docCount}</div>
+    <div className="page-stack">
+      <header className="page-header dashboard-header">
+        <div>
+          <p className="eyebrow">Workspace Overview</p>
+          <h1>Dashboard</h1>
+          <p className="page-description">
+            Review indexed documents, monitor retrieval readiness and manage the
+            test generation workflow.
+          </p>
         </div>
-        <div className="metric-card">
-          <div className="metric-label">Total Chunks</div>
-          <div className="metric-value">{loading ? '...' : chunkCount}</div>
+
+        <div className="header-status">
+          <span className="status-dot" />
+          Pipeline operational
         </div>
-        <div className="metric-card">
-          <div className="metric-label">RAG Pipeline</div>
-          <div className="metric-value">Ready</div>
+      </header>
+
+      <section className="metrics-grid">
+        <article className="metric-card">
+          <div className="metric-card-header">
+            <span className="metric-icon">
+              <FileText size={20} />
+            </span>
+            <span className="metric-status">Indexed</span>
+          </div>
+
+          <div className="metric-value">
+            {loading ? <span className="skeleton-number" /> : docCount}
+          </div>
+
+          <div className="metric-label">Documents</div>
+          <p className="metric-description">
+            Project files currently available for retrieval.
+          </p>
+        </article>
+
+        <article className="metric-card">
+          <div className="metric-card-header">
+            <span className="metric-icon">
+              <Layers3 size={20} />
+            </span>
+            <span className="metric-status">Searchable</span>
+          </div>
+
+          <div className="metric-value">
+            {loading ? <span className="skeleton-number" /> : chunkCount}
+          </div>
+
+          <div className="metric-label">Document chunks</div>
+          <p className="metric-description">
+            Embedded content segments stored for semantic search.
+          </p>
+        </article>
+
+        <article className="metric-card">
+          <div className="metric-card-header">
+            <span className="metric-icon">
+              <Database size={20} />
+            </span>
+            <span className="metric-status success">Ready</span>
+          </div>
+
+          <div className="metric-value metric-word">RAG</div>
+          <div className="metric-label">Retrieval pipeline</div>
+          <p className="metric-description">
+            Feature-based retrieval and source references are enabled.
+          </p>
+        </article>
+
+        <article className="metric-card">
+          <div className="metric-card-header">
+            <span className="metric-icon">
+              <CheckCircle2 size={20} />
+            </span>
+            <span className="metric-status success">Active</span>
+          </div>
+
+          <div className="metric-value metric-word">Online</div>
+          <div className="metric-label">System status</div>
+          <p className="metric-description">
+            The application is ready to generate and evaluate test cases.
+          </p>
+        </article>
+      </section>
+
+      <section className="dashboard-grid">
+        <article className="card product-intro-card">
+          <div className="card-heading-row">
+            <div>
+              <p className="eyebrow">About the workspace</p>
+              <h2>Documentation-driven test generation</h2>
+            </div>
+
+            <span className="large-card-icon">
+              <FlaskConical size={25} />
+            </span>
+          </div>
+
+          <p className="card-description">
+            TestPilot Lite RAG generates structured test cases from indexed
+            project documentation. The system retrieves requirements related to
+            the selected feature, creates requirement-grounded scenarios and
+            evaluates coverage using the source documents.
+          </p>
+
+          <div className="feature-list">
+            <div className="feature-item">
+              <CheckCircle2 size={18} />
+              <span>
+                Generate positive, negative, validation, edge-case and security
+                scenarios.
+              </span>
+            </div>
+
+            <div className="feature-item">
+              <CheckCircle2 size={18} />
+              <span>
+                Review source references and quality evaluation metrics.
+              </span>
+            </div>
+
+            <div className="feature-item">
+              <CheckCircle2 size={18} />
+              <span>Export results as JSON, Markdown, CSV or Gherkin.</span>
+            </div>
+          </div>
+        </article>
+
+        <article className="card technology-card">
+          <p className="eyebrow">Technology</p>
+          <h2>Application stack</h2>
+
+          <div className="stack-list">
+            <div className="stack-item">
+              <span>API</span>
+              <strong>FastAPI</strong>
+            </div>
+
+            <div className="stack-item">
+              <span>Vector database</span>
+              <strong>ChromaDB</strong>
+            </div>
+
+            <div className="stack-item">
+              <span>Embeddings</span>
+              <strong>Sentence Transformers</strong>
+            </div>
+
+            <div className="stack-item">
+              <span>Interface</span>
+              <strong>React + TypeScript</strong>
+            </div>
+          </div>
+        </article>
+      </section>
+
+      <section className="card workflow-section">
+        <div className="section-heading">
+          <div>
+            <p className="eyebrow">Getting started</p>
+            <h2>How the workflow operates</h2>
+            <p>
+              Complete these stages to move from project documentation to
+              exportable test cases.
+            </p>
+          </div>
         </div>
-        <div className="metric-card">
-          <div className="metric-label">Status</div>
-          <div className="metric-value">Active</div>
+
+        <div className="workflow-grid">
+          <article className="workflow-step">
+            <span className="step-number">01</span>
+            <span className="workflow-icon">
+              <UploadCloud size={22} />
+            </span>
+            <h3>Upload documentation</h3>
+            <p>
+              Add requirements, user stories, acceptance criteria or API
+              specifications from the Documents page.
+            </p>
+          </article>
+
+          <ArrowRight className="workflow-arrow" size={20} />
+
+          <article className="workflow-step">
+            <span className="step-number">02</span>
+            <span className="workflow-icon">
+              <Layers3 size={22} />
+            </span>
+            <h3>Index the content</h3>
+            <p>
+              Documents are divided into chunks, transformed into embeddings and
+              stored for semantic retrieval.
+            </p>
+          </article>
+
+          <ArrowRight className="workflow-arrow" size={20} />
+
+          <article className="workflow-step">
+            <span className="step-number">03</span>
+            <span className="workflow-icon">
+              <FlaskConical size={22} />
+            </span>
+            <h3>Generate test cases</h3>
+            <p>
+              Describe the feature, choose test types and create grounded
+              scenarios using the indexed requirements.
+            </p>
+          </article>
+
+          <ArrowRight className="workflow-arrow" size={20} />
+
+          <article className="workflow-step">
+            <span className="step-number">04</span>
+            <span className="workflow-icon">
+              <FileText size={22} />
+            </span>
+            <h3>Review and export</h3>
+            <p>
+              Inspect coverage, source references and test details before
+              exporting the final result.
+            </p>
+          </article>
         </div>
-      </div>
-
-      <div className="card">
-        <h2 className="section-title">Welcome to TestPilot Lite RAG</h2>
-        <p>
-          TestPilot Lite RAG is an AI-powered test scenario generator that creates structured test cases from your project documentation.
-        </p>
-
-        <h3>Quick Start</h3>
-        <ol>
-          <li><strong>Upload Documents:</strong> Go to the Documents page and upload your user stories, acceptance criteria, or API specifications.</li>
-          <li><strong>Index and Chunk:</strong> The system automatically chunks and indexes your documents using embeddings.</li>
-          <li><strong>Generate Tests:</strong> Go to Generate Tests, describe a feature you want to test, and get structured test cases.</li>
-          <li><strong>Export:</strong> Export your test cases in JSON, Markdown, CSV, or Gherkin format.</li>
-        </ol>
-
-        <h3>Supported Features</h3>
-        <ul>
-          <li>✅ Document upload (TXT, MD, JSON, YAML)</li>
-          <li>✅ Automatic chunking and embedding</li>
-          <li>✅ RAG-based test generation</li>
-          <li>✅ Multiple test types (Positive, Negative, Edge Case, etc.)</li>
-          <li>✅ Multiple export formats</li>
-          <li>✅ Source document tracking</li>
-        </ul>
-
-        <h3>Technology Stack</h3>
-        <ul>
-          <li>Backend: FastAPI + SQLAlchemy</li>
-          <li>Vector Store: ChromaDB</li>
-          <li>Embeddings: sentence-transformers</li>
-          <li>Frontend: React + TypeScript</li>
-        </ul>
-      </div>
+      </section>
     </div>
-  )
+  );
 }
 
-export default Dashboard
+export default Dashboard;
