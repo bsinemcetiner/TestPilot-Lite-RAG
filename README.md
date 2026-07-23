@@ -25,10 +25,8 @@ The system retrieves relevant requirements from an indexed knowledge base, gener
 Monitor indexed documents, retrieval readiness and workspace status from a single dashboard.
 
 <p align="center">
-  <img src="docs/images/dashboard.png" width="50%>
+  <img src="docs/images/dashboard.png" width="50%">
 </p>
-
----
 
 ## Document Management
 
