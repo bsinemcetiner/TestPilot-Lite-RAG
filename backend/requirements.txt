@@ -9,3 +9,4 @@ chromadb
 numpy
 openai
 requests
+pypdf

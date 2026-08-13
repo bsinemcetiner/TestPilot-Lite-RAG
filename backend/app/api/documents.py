@@ -1,5 +1,7 @@
 from typing import List, Optional
 
+import io
+import pypdf
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 
@@ -38,7 +40,29 @@ async def upload_document_file(
     file: UploadFile = File(...),
     db: Session = Depends(get_db),
 ):
-    content = (await file.read()).decode("utf-8")
+    raw_content = await file.read()
+    content = ""
+
+    if format.lower() == "pdf" or file.filename.lower().endswith(".pdf"):
+        try:
+            pdf_reader = pypdf.PdfReader(io.BytesIO(raw_content))
+            extracted = []
+            for page in pdf_reader.pages:
+                extracted.append(page.extract_text() or "")
+            content = "\n".join(extracted)
+        except Exception as e:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Failed to parse PDF file: {str(e)}",
+            )
+    else:
+        try:
+            content = raw_content.decode("utf-8")
+        except UnicodeDecodeError:
+            raise HTTPException(
+                status_code=400,
+                detail="File content must be valid UTF-8 text unless it is a PDF.",
+            )
 
     if not content.strip():
         raise HTTPException(

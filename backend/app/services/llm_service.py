@@ -35,10 +35,12 @@ class LLMService:
                 str(exc),
             )
             fallback = MockLLMProvider()
-            return fallback.generate_test_cases(
+            cases = fallback.generate_test_cases(
                 feature_name=feature_name,
                 query=query,
                 retrieved_context=retrieved_context,
                 test_types=test_types,
                 num_cases=num_cases,
-            ), fallback.provider_name
+            )
+            # Return with explicit fallback indicator
+            return cases, "mock_fallback"

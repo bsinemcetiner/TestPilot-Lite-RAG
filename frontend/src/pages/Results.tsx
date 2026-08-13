@@ -8,6 +8,8 @@ import {
   FileText,
   Info,
   Layers3,
+  LoaderCircle,
+  Search,
   ShieldCheck,
 } from "lucide-react";
 
@@ -48,14 +50,16 @@ function Results({
   onSelectedHistoryIdChange,
 }: ResultsProps) {
   const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
-
   const [showPageHelp, setShowPageHelp] = useState(false);
+  const [loadingBackend, setLoadingBackend] = useState(false);
+  const [backendResult, setBackendResult] = useState<GenerationResponse | null>(null);
 
   useEffect(() => {
+    // Only load local history here since we just need the list to navigate.
+    // In a real app, Results could also fetch the list.
     const storedHistory = sortGenerationHistory(readGenerationHistory()).filter(
-      (item) => Boolean(item.response),
+      (item) => Boolean(item.response) || item.id.includes("-"),
     );
-
     setHistory(storedHistory);
   }, []);
 
@@ -77,6 +81,33 @@ function Results({
     }
   }, [history, selectedHistoryId, onSelectedHistoryIdChange]);
 
+  useEffect(() => {
+    if (!selectedHistoryId) return;
+
+    const item = history.find(i => i.id === selectedHistoryId);
+    if (!item) return;
+
+    if (item.id.includes("-")) {
+      setLoadingBackend(true);
+      import("../api/apiClient").then(({ getHistoryDetail }) => {
+        getHistoryDetail(item.id).then(detail => {
+          const mappedResponse: GenerationResponse = {
+            feature: detail.feature,
+            count: detail.requested_count,
+            provider: detail.provider,
+            retrieved_chunks: detail.retrieved_chunks_count,
+            formatted: detail.formatted_output || "",
+            evaluation: detail.evaluation_metrics,
+            test_cases: detail.test_cases
+          };
+          setBackendResult(mappedResponse);
+        }).catch(console.error).finally(() => setLoadingBackend(false));
+      });
+    } else {
+      setBackendResult(item.response || null);
+    }
+  }, [selectedHistoryId, history]);
+
   const selectedItem = useMemo(
     () =>
       history.find((item) => item.id === selectedHistoryId) ??
@@ -85,7 +116,7 @@ function Results({
     [history, selectedHistoryId],
   );
 
-  const result: GenerationResponse | null = selectedItem?.response ?? null;
+  const result: GenerationResponse | null = backendResult;
 
   const downloadFile = (
     content: string,
@@ -183,7 +214,14 @@ function Results({
         </div>
       </header>
 
-      {history.length === 0 || !result ? (
+      {loadingBackend ? (
+        <section className="card results-empty-card">
+          <span className="results-empty-icon">
+            <LoaderCircle className="spinner-icon" size={34} />
+          </span>
+          <h2>Loading result...</h2>
+        </section>
+      ) : history.length === 0 || !result ? (
         <section className="card results-empty-card">
           <span className="results-empty-icon">
             <ClipboardCheck size={34} />
@@ -302,6 +340,45 @@ function Results({
                 <span>Groundedness</span>
                 <p>Scenarios supported by indexed sources.</p>
               </article>
+            </section>
+          )}
+
+          {result.evaluation && result.evaluation.requirement_coverage_details && result.evaluation.requirement_coverage_details.length > 0 && (
+            <section className="card results-coverage-card">
+              <div className="results-section-header">
+                <div>
+                  <p className="eyebrow">Coverage</p>
+                  <h2>Requirement Coverage Matrix</h2>
+                </div>
+              </div>
+              <div className="table-responsive" style={{ overflowX: "auto", marginTop: "1rem" }}>
+                <table className="results-table" style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
+                  <thead>
+                    <tr style={{ borderBottom: "1px solid var(--border-color)", paddingBottom: "0.5rem" }}>
+                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Requirement</th>
+                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Status</th>
+                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Match Score</th>
+                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Matched Test Case</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {result.evaluation.requirement_coverage_details.map((detail, idx) => (
+                      <tr key={idx} style={{ borderBottom: "1px solid var(--border-color)" }}>
+                        <td style={{ padding: "0.75rem" }}>{detail.requirement}</td>
+                        <td style={{ padding: "0.75rem" }}>
+                          {detail.covered ? (
+                            <span className="badge badge-positive" style={{ background: "var(--positive-bg)", color: "var(--positive-fg)" }}>Covered</span>
+                          ) : (
+                            <span className="badge badge-negative" style={{ background: "var(--negative-bg)", color: "var(--negative-fg)" }}>Uncovered</span>
+                          )}
+                        </td>
+                        <td style={{ padding: "0.75rem" }}>{detail.match_score}</td>
+                        <td style={{ padding: "0.75rem" }}>{detail.matched_test_case || "-"}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </section>
           )}
 

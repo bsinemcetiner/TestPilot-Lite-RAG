@@ -20,7 +20,10 @@ class TestCaseGenerator:
         """
         Generate structured test cases based on feature name and retrieved context.
         Uses an LLM provider backend and validates with Pydantic schema.
+        Fills any gap between generated and requested count with category-distributed fallbacks.
         """
+
+        
         if test_types is None:
             test_types = ["Positive", "Negative", "Edge Case"]
 
@@ -39,10 +42,11 @@ class TestCaseGenerator:
                 f"{type(exc).__name__}: {exc}"
             )
             raw_cases = []
-            used_provider = "mock"
+            used_provider = "mock_fallback"
 
         if not isinstance(raw_cases, list):
             raw_cases = []
+
 
         validated_cases = []
         for idx, case in enumerate(raw_cases or [], 1):
@@ -50,14 +54,16 @@ class TestCaseGenerator:
             try:
                 validated = TestCaseSchema(**case)
                 validated_cases.append(validated.dict())
-            except ValidationError:
-                fallback_case = TestCaseGenerator._build_fallback_case(
-                    feature_name=feature_name,
-                    test_type=case.get('type', 'Positive'),
-                    index=idx,
-                    retrieved_context=retrieved_context,
-                )
-                validated_cases.append(fallback_case)
+            except ValidationError as e:
+                # Print detailed validation error
+                error_details = []
+                for error in e.errors():
+                    field = '.'.join(str(x) for x in error['loc'])
+                    error_type = error['type']
+                    msg = error.get('msg', 'Unknown error')
+                    error_details.append(f"{field}: {msg}")
+                pass
+                # Skip this case - gap-filling will handle replacement
 
         validated_cases = (
             TestCaseGenerator._remove_duplicate_cases(
@@ -65,11 +71,38 @@ class TestCaseGenerator:
             )
         )
 
+
+
+        # Fill gap: if we have fewer cases than requested, add category-distributed fallbacks
+        gap_filled_count = 0
+        if len(validated_cases) < num_cases:
+            missing_count = num_cases - len(validated_cases)
+            fallback_cases = TestCaseGenerator._create_distributed_fallback_cases(
+                feature_name=feature_name,
+                query=query,
+                retrieved_context=retrieved_context,
+                test_types=test_types,
+                count=missing_count,
+                start_index=len(validated_cases) + 1,
+                used_types=[case.get('type', 'Positive') for case in validated_cases],
+            )
+            gap_filled_count = len(fallback_cases)
+            validated_cases.extend(fallback_cases)
+
+
+
+        # Re-index and update titles with final IDs
         for index, test_case in enumerate(
                 validated_cases,
                 start=1,
         ):
             test_case["id"] = index
+            # Update title to reflect final case number
+            if " - Case " in test_case.get("title", ""):
+                parts = test_case["title"].rsplit(" - Case ", 1)
+                test_case["title"] = f"{parts[0]} - Case {index}"
+
+
 
         if not validated_cases:
             validated_cases = [
@@ -78,6 +111,7 @@ class TestCaseGenerator:
                     test_type=test_types[0] if test_types else 'Positive',
                     index=1,
                     retrieved_context=retrieved_context,
+                    query=query,
                 )
             ]
 
@@ -141,19 +175,70 @@ class TestCaseGenerator:
         test_type: str,
         index: int,
         retrieved_context: List[Dict[str, Any]],
+        query: str = "",
     ) -> Dict[str, Any]:
+        """Build a context-aware fallback test case."""
+        # Extract key words from query and context for specificity
+        context_snippet = ""
+        if retrieved_context and len(retrieved_context) > 0:
+            context_snippet = retrieved_context[0]['text'][:100]
+        
+        # Create type-specific steps
+        steps = []
+        if test_type == "Positive":
+            steps = [
+                f"Navigate to {feature_name} module",
+                f"Provide valid input based on requirements: {context_snippet[:50]}",
+                f"Submit the action",
+            ]
+            expected = f"The system successfully processes the request for {feature_name}."
+        elif test_type == "Negative":
+            steps = [
+                f"Navigate to {feature_name} module",
+                f"Provide invalid or boundary input",
+                f"Attempt to submit",
+            ]
+            expected = f"The system properly rejects invalid input for {feature_name}."
+        elif test_type == "Edge Case":
+            steps = [
+                f"Navigate to {feature_name} module",
+                f"Provide edge case input (boundary values, special characters)",
+                f"Verify handling of edge conditions",
+            ]
+            expected = f"The system handles edge cases gracefully for {feature_name}."
+        elif test_type == "Validation":
+            steps = [
+                f"Navigate to {feature_name} module",
+                f"Attempt to input data that violates validation rules",
+                f"Check validation error messages",
+            ]
+            expected = f"Proper validation errors are displayed for {feature_name}."
+        elif test_type == "Security":
+            steps = [
+                f"Navigate to {feature_name} module",
+                f"Attempt to bypass security controls",
+                f"Verify security measures are in place",
+            ]
+            expected = f"Security controls for {feature_name} are properly enforced."
+        else:
+            steps = [
+                f"Access {feature_name} functionality",
+                f"Perform {test_type.lower()} scenario",
+                f"Verify result",
+            ]
+            expected = f"The system correctly handles {test_type.lower()} for {feature_name}."
+
         return {
             'id': index,
-            'title': f'{test_type} test for {feature_name} - Case {index}',
+            'title': f'{test_type}: {feature_name} - Case {index}',
             'type': test_type if test_type in ['Positive', 'Negative', 'Edge Case', 'Validation', 'Security'] else 'Positive',
             'priority': 'High' if test_type in ['Positive', 'Security'] else 'Medium',
-            'preconditions': [f'{feature_name} should be accessible'],
-            'steps': [
-                f'Open the {feature_name} page',
-                f'Perform {test_type.lower()} actions',
-                'Verify the result matches expectations'
+            'preconditions': [
+                f'{feature_name} is accessible',
+                f'User has necessary permissions'
             ],
-            'expected_result': f'The system handles {test_type.lower()} scenario for {feature_name}.',
+            'steps': steps,
+            'expected_result': expected,
             'source_references': [
                 {
                     'document_name': c['metadata'].get('document_name', 'Unknown'),
@@ -162,8 +247,43 @@ class TestCaseGenerator:
                 }
                 for i, c in enumerate(retrieved_context[:2], start=1)
             ],
-            'confidence': 0.5,
+            'confidence': 0.6,
         }
+
+    @staticmethod
+    def _create_distributed_fallback_cases(
+        feature_name: str,
+        query: str,
+        retrieved_context: List[Dict[str, Any]],
+        test_types: List[str],
+        count: int,
+        start_index: int,
+        used_types: List[str],
+    ) -> List[Dict[str, Any]]:
+        """Create multiple fallback cases with distributed test types."""
+        fallback_cases = []
+        
+        # Calculate which types to prioritize
+        remaining_types = [t for t in test_types if t in ['Positive', 'Negative', 'Edge Case', 'Validation', 'Security']]
+        if not remaining_types:
+            remaining_types = ['Positive', 'Negative', 'Edge Case']
+        
+        # Distribute types across fallback cases
+        type_index = 0
+        for i in range(count):
+            selected_type = remaining_types[type_index % len(remaining_types)]
+            type_index += 1
+            
+            case = TestCaseGenerator._build_fallback_case(
+                feature_name=feature_name,
+                test_type=selected_type,
+                index=start_index + i,
+                retrieved_context=retrieved_context,
+                query=query,
+            )
+            fallback_cases.append(case)
+        
+        return fallback_cases
 
     @staticmethod
     def to_gherkin(test_case: Dict[str, Any]) -> str:

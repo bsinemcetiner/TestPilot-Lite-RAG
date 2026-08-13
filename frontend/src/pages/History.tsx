@@ -9,6 +9,7 @@ import {
   sortGenerationHistory,
   writeGenerationHistory,
 } from "../types/generationHistory";
+import { getHistory, deleteHistory as apiDeleteHistory, togglePinHistory } from "../api/apiClient";
 
 type HistoryProps = {
   onOpenResults: (historyId?: string) => void;
@@ -24,7 +25,32 @@ function History({ onOpenResults }: HistoryProps) {
     useState<GenerationHistoryItem | null>(null);
 
   useEffect(() => {
-    setHistory(sortGenerationHistory(readGenerationHistory()));
+    async function loadData() {
+      try {
+        const backendData = await getHistory();
+        const mappedBackend = backendData.map(item => ({
+          id: item.id,
+          feature: item.feature,
+          query: item.query,
+          outputFormat: item.output_format,
+          provider: item.provider,
+          count: item.requested_count,
+          createdAt: item.created_at,
+          isPinned: item.is_pinned,
+          preview: "",
+          response: true as any // mock truthy to make it clickable
+        }));
+        
+        const local = readGenerationHistory();
+        
+        // Merge without duplicates (favoring backend if UUID match, though local is timestamp based)
+        setHistory([...mappedBackend, ...local]);
+      } catch (e) {
+        // Fallback to local
+        setHistory(sortGenerationHistory(readGenerationHistory()));
+      }
+    }
+    loadData();
   }, []);
 
   const filteredHistory = useMemo(() => {
@@ -44,26 +70,40 @@ function History({ onOpenResults }: HistoryProps) {
     });
   }, [history, search]);
 
-  const toggleFavorite = (id: string) => {
-    const updatedHistory = history.map((item) =>
-      item.id === id
-        ? {
-            ...item,
-            isPinned: !item.isPinned,
-          }
-        : item,
-    );
-
-    setHistory(updatedHistory);
-    writeGenerationHistory(updatedHistory);
+  const toggleFavorite = async (id: string) => {
+    try {
+      // Optimistic update
+      const updatedHistory = history.map((item) =>
+        item.id === id ? { ...item, isPinned: !item.isPinned } : item
+      );
+      setHistory(updatedHistory);
+      
+      if (id.includes("-")) {
+        // Backend UUID has hyphens
+        await togglePinHistory(id);
+      } else {
+        // Local timestamp
+        writeGenerationHistory(updatedHistory.filter(i => !i.id.includes("-")));
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
-  const deleteHistoryItem = (id: string) => {
-    const updatedHistory = history.filter((item) => item.id !== id);
+  const deleteHistoryItem = async (id: string) => {
+    try {
+      const updatedHistory = history.filter((item) => item.id !== id);
+      setHistory(updatedHistory);
+      setItemToDelete(null);
 
-    setHistory(updatedHistory);
-    writeGenerationHistory(updatedHistory);
-    setItemToDelete(null);
+      if (id.includes("-")) {
+        await apiDeleteHistory(id);
+      } else {
+        writeGenerationHistory(updatedHistory.filter(i => !i.id.includes("-")));
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   return (

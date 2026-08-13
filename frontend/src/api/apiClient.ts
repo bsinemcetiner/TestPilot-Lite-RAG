@@ -107,6 +107,7 @@ export type GenerationResponse = {
   retrieved_chunks: number;
   provider: string;
   formatted: string;
+  id?: string;
   evaluation?: {
     total_cases: number;
     coverage_score: number;
@@ -116,8 +117,51 @@ export type GenerationResponse = {
     issues_found: number;
     issues: string[];
     recommendation: string;
+    requirement_coverage_details?: {
+      requirement: string;
+      covered: boolean;
+      match_score: number;
+      matched_test_case: string | null;
+    }[];
   };
 };
+
+export type BackendHistoryItem = {
+  id: string;
+  feature: string;
+  query: string;
+  provider: string;
+  output_format: string;
+  requested_count: number;
+  retrieved_chunks_count: number;
+  is_pinned: boolean;
+  evaluation_metrics: any;
+  formatted_output: string;
+  created_at: string;
+};
+
+export async function getHistory(): Promise<BackendHistoryItem[]> {
+  const response = await fetch(`${API_BASE}/history`);
+  if (!response.ok) throw new Error("Failed to load history");
+  return response.json();
+}
+
+export async function getHistoryDetail(id: string): Promise<any> {
+  const response = await fetch(`${API_BASE}/history/${id}`);
+  if (!response.ok) throw new Error("Failed to load history detail");
+  return response.json();
+}
+
+export async function deleteHistory(id: string): Promise<void> {
+  const response = await fetch(`${API_BASE}/history/${id}`, { method: "DELETE" });
+  if (!response.ok) throw new Error("Failed to delete history");
+}
+
+export async function togglePinHistory(id: string): Promise<{ is_pinned: boolean }> {
+  const response = await fetch(`${API_BASE}/history/${id}/pin`, { method: "PATCH" });
+  if (!response.ok) throw new Error("Failed to toggle pin");
+  return response.json();
+}
 
 export async function getProviders(): Promise<string[]> {
   const response = await fetch(`${API_BASE}/providers`);

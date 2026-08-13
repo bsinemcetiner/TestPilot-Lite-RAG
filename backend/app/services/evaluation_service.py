@@ -21,8 +21,10 @@ class EvaluationService:
     def evaluate_test_cases(
             test_cases: List[Dict[str, Any]],
             requirements: List[str] | None = None,
+            retrieved_context: List[Dict[str, Any]] | None = None,
     ) -> Dict[str, Any]:
         requirements = requirements or []
+        retrieved_context = retrieved_context or []
         if not test_cases:
             return {
                 "total_cases": 0,
@@ -140,14 +142,15 @@ class EvaluationService:
             )
         )
 
-        groundedness_score = round(
-            (
-                total_cases - missing_source
-            )
-            / total_cases
-            * 100,
-            2,
+        grounded_cases = EvaluationService._count_grounded_cases(
+            test_cases=test_cases,
+            retrieved_context=retrieved_context,
         )
+
+        groundedness_score = round(
+            (grounded_cases / total_cases) * 100,
+            2,
+        ) if total_cases > 0 else 0.0
 
         uniqueness_score = round(
             (
@@ -176,6 +179,7 @@ class EvaluationService:
         covered_requirements = coverage_result["covered_requirements"]
         uncovered_requirements = coverage_result["uncovered_requirements"]
         requirement_coverage_details = coverage_result["details"]
+
 
         overall_score = round(
             coverage_score * 0.20
@@ -299,6 +303,75 @@ class EvaluationService:
         ) * 100
 
         return round(score, 2)
+
+    @staticmethod
+    def _count_grounded_cases(
+            test_cases: List[Dict[str, Any]],
+            retrieved_context: List[Dict[str, Any]],
+    ) -> int:
+        if not retrieved_context:
+            return 0
+
+        context_parts = []
+        for chunk in retrieved_context:
+            text = str(
+                chunk.get("text")
+                or chunk.get("content")
+                or chunk.get("document")
+                or chunk.get("page_content")
+                or ""
+            ).strip()
+            if text:
+                context_parts.append(text)
+
+        combined_context = " ".join(context_parts)
+        combined_context_lower = combined_context.lower()
+        context_tokens = EvaluationService._normalize_tokens(combined_context)
+        context_normalized_str = " ".join(context_tokens)
+
+        grounded_count = 0
+
+        for test_case in test_cases:
+            sources = test_case.get("source_references", [])
+            if not isinstance(sources, list) or not sources:
+                continue
+
+            is_case_grounded = False
+            for source in sources:
+                if not isinstance(source, dict):
+                    continue
+
+                doc_name = str(source.get("document_name", "")).strip()
+                quote = str(source.get("quote", "")).strip()
+
+                if not doc_name or not quote:
+                    continue
+
+                # 1. Exact or near-exact match
+                if quote.lower() in combined_context_lower:
+                    is_case_grounded = True
+                    break
+
+                # 2. Strong token match
+                quote_tokens = EvaluationService._normalize_tokens(quote)
+                if not quote_tokens:
+                    continue
+
+                quote_normalized_str = " ".join(quote_tokens)
+                if quote_normalized_str in context_normalized_str:
+                    is_case_grounded = True
+                    break
+
+                # 3. High intersection ratio
+                common = quote_tokens.intersection(context_tokens)
+                if len(common) / len(quote_tokens) >= 0.7:
+                    is_case_grounded = True
+                    break
+
+            if is_case_grounded:
+                grounded_count += 1
+
+        return grounded_count
 
     @staticmethod
     def _calculate_coverage(

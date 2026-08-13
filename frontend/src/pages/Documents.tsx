@@ -24,7 +24,7 @@ import {
   uploadDocumentText,
 } from "../api/apiClient";
 
-const documentFormats = ["md", "txt", "json", "yaml"];
+const documentFormats = ["md", "txt", "json", "yaml", "pdf"];
 
 type DocumentWithChunks = DocumentRecord & {
   chunk_count?: number;
@@ -144,7 +144,7 @@ function Documents() {
       return;
     }
 
-    const allowedExtensions = [".txt", ".md", ".json", ".yaml", ".yml"];
+    const allowedExtensions = [".txt", ".md", ".json", ".yaml", ".yml", ".pdf"];
 
     const lowerName = selectedFile.name.toLowerCase();
     const isSupported = allowedExtensions.some((extension) =>
@@ -153,7 +153,7 @@ function Documents() {
 
     if (!isSupported) {
       setMessage(
-        "Unsupported file type. Please select TXT, MD, JSON, YAML or YML.",
+        "Unsupported file type. Please select TXT, MD, JSON, YAML, YML, or PDF.",
       );
       setIsError(true);
       return;
@@ -419,7 +419,7 @@ function Documents() {
             <div className="field-group">
               <span className="field-label">
                 Document file
-                <InfoTooltip text="Supported file types: TXT, MD, JSON, YAML and YML." />
+                <InfoTooltip text="Supported file types: TXT, MD, JSON, YAML, YML, and PDF." />
               </span>
 
               <div
@@ -434,7 +434,7 @@ function Documents() {
                   ref={fileInputRef}
                   type="file"
                   className="file-input-hidden"
-                  accept=".txt,.md,.json,.yaml,.yml"
+                  accept=".txt,.md,.json,.yaml,.yml,.pdf"
                   onChange={handleFileChange}
                 />
 
@@ -479,7 +479,7 @@ function Documents() {
                       Browse files
                     </button>
 
-                    <small>TXT, MD, JSON, YAML or YML</small>
+                    <small>TXT, MD, JSON, YAML, YML or PDF</small>
                   </>
                 )}
               </div>

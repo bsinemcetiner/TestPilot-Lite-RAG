@@ -48,3 +48,4 @@ class GenerationResponseSchema(BaseModel):
     provider: str
     formatted: str
     evaluation: dict
+    id: str | None = None
