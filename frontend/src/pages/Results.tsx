@@ -15,12 +15,8 @@ import {
 
 import type { GenerationResponse } from "../api/apiClient";
 
-import {
-  readGenerationHistory,
-  sortGenerationHistory,
-} from "../types/generationHistory";
-
-import type { GenerationHistoryItem } from "../types/generationHistory";
+import { getHistory } from "../api/apiClient";
+import type { BackendHistoryItem } from "../api/apiClient";
 
 type ResultsProps = {
   selectedHistoryId: string | null;
@@ -49,18 +45,15 @@ function Results({
   selectedHistoryId,
   onSelectedHistoryIdChange,
 }: ResultsProps) {
-  const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
+  const [history, setHistory] = useState<BackendHistoryItem[]>([]);
   const [showPageHelp, setShowPageHelp] = useState(false);
   const [loadingBackend, setLoadingBackend] = useState(false);
   const [backendResult, setBackendResult] = useState<GenerationResponse | null>(null);
 
   useEffect(() => {
-    // Only load local history here since we just need the list to navigate.
-    // In a real app, Results could also fetch the list.
-    const storedHistory = sortGenerationHistory(readGenerationHistory()).filter(
-      (item) => Boolean(item.response) || item.id.includes("-"),
-    );
-    setHistory(storedHistory);
+    import("../api/apiClient").then(({ getHistory }) => {
+      getHistory().then(setHistory).catch(console.error);
+    });
   }, []);
 
   useEffect(() => {
@@ -87,25 +80,21 @@ function Results({
     const item = history.find(i => i.id === selectedHistoryId);
     if (!item) return;
 
-    if (item.id.includes("-")) {
-      setLoadingBackend(true);
-      import("../api/apiClient").then(({ getHistoryDetail }) => {
-        getHistoryDetail(item.id).then(detail => {
-          const mappedResponse: GenerationResponse = {
-            feature: detail.feature,
-            count: detail.requested_count,
-            provider: detail.provider,
-            retrieved_chunks: detail.retrieved_chunks_count,
-            formatted: detail.formatted_output || "",
-            evaluation: detail.evaluation_metrics,
-            test_cases: detail.test_cases
-          };
-          setBackendResult(mappedResponse);
-        }).catch(console.error).finally(() => setLoadingBackend(false));
-      });
-    } else {
-      setBackendResult(item.response || null);
-    }
+    setLoadingBackend(true);
+    import("../api/apiClient").then(({ getHistoryDetail }) => {
+      getHistoryDetail(item.id).then(detail => {
+        const mappedResponse: GenerationResponse = {
+          feature: detail.feature,
+          count: detail.requested_count,
+          provider: detail.provider,
+          retrieved_chunks: detail.retrieved_chunks_count,
+          formatted: detail.formatted_output || "",
+          evaluation: detail.evaluation_metrics,
+          test_cases: detail.test_cases
+        };
+        setBackendResult(mappedResponse);
+      }).catch(console.error).finally(() => setLoadingBackend(false));
+    });
   }, [selectedHistoryId, history]);
 
   const selectedItem = useMemo(
@@ -151,7 +140,7 @@ function Results({
       return;
     }
 
-    const extension = selectedItem.outputFormat.toLowerCase();
+    const extension = selectedItem.output_format.toLowerCase();
 
     downloadFile(
       result.formatted,
@@ -251,9 +240,9 @@ function Results({
               >
                 {history.map((item) => (
                   <option key={item.id} value={item.id}>
-                    {item.feature} · {item.count} cases ·{" "}
-                    {new Date(item.createdAt).toLocaleString()}
-                    {item.isPinned ? " · Favorite" : ""}
+                    {item.feature} · {item.requested_count} cases ·{" "}
+                    {new Date(item.created_at).toLocaleString()}
+                    {item.is_pinned ? " · Favorite" : ""}
                   </option>
                 ))}
               </select>
@@ -289,7 +278,7 @@ function Results({
 
               <span>
                 <FileText size={16} />
-                {new Date(selectedItem?.createdAt ?? "").toLocaleString()}
+                {new Date(selectedItem?.created_at ?? "").toLocaleString()}
               </span>
             </div>
           </section>
@@ -404,7 +393,7 @@ function Results({
                 onClick={exportOriginal}
               >
                 <FileText size={17} />
-                Original {selectedItem?.outputFormat.toUpperCase()}
+                Original {selectedItem?.output_format.toUpperCase()}
               </button>
 
               <button

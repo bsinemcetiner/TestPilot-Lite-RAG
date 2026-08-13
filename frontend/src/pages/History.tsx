@@ -4,12 +4,22 @@ import { Clock3, Info, Search, Star, Trash2 } from "lucide-react";
 import ConfirmModal from "../components/ConfirmModal";
 
 import {
-  GenerationHistoryItem,
-  readGenerationHistory,
-  sortGenerationHistory,
-  writeGenerationHistory,
-} from "../types/generationHistory";
-import { getHistory, deleteHistory as apiDeleteHistory, togglePinHistory } from "../api/apiClient";
+  BackendHistoryItem,
+  getHistory,
+  deleteHistory as apiDeleteHistory,
+  togglePinHistory,
+} from "../api/apiClient";
+
+export type GenerationHistoryItem = {
+  id: string;
+  feature: string;
+  query: string;
+  outputFormat: string;
+  provider: string;
+  count: number;
+  createdAt: string;
+  isPinned: boolean;
+};
 
 type HistoryProps = {
   onOpenResults: (historyId?: string) => void;
@@ -28,7 +38,7 @@ function History({ onOpenResults }: HistoryProps) {
     async function loadData() {
       try {
         const backendData = await getHistory();
-        const mappedBackend = backendData.map(item => ({
+        const mappedBackend = backendData.map((item) => ({
           id: item.id,
           feature: item.feature,
           query: item.query,
@@ -37,17 +47,10 @@ function History({ onOpenResults }: HistoryProps) {
           count: item.requested_count,
           createdAt: item.created_at,
           isPinned: item.is_pinned,
-          preview: "",
-          response: true as any // mock truthy to make it clickable
         }));
-        
-        const local = readGenerationHistory();
-        
-        // Merge without duplicates (favoring backend if UUID match, though local is timestamp based)
-        setHistory([...mappedBackend, ...local]);
+        setHistory(mappedBackend);
       } catch (e) {
-        // Fallback to local
-        setHistory(sortGenerationHistory(readGenerationHistory()));
+        console.error("Failed to load history from backend:", e);
       }
     }
     loadData();
@@ -56,7 +59,11 @@ function History({ onOpenResults }: HistoryProps) {
   const filteredHistory = useMemo(() => {
     const normalizedSearch = search.trim().toLowerCase();
 
-    return sortGenerationHistory(history).filter((item) => {
+    const sorted = [...history].sort(
+      (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime()
+    );
+
+    return sorted.filter((item) => {
       if (!normalizedSearch) {
         return true;
       }
@@ -72,19 +79,11 @@ function History({ onOpenResults }: HistoryProps) {
 
   const toggleFavorite = async (id: string) => {
     try {
-      // Optimistic update
       const updatedHistory = history.map((item) =>
         item.id === id ? { ...item, isPinned: !item.isPinned } : item
       );
       setHistory(updatedHistory);
-      
-      if (id.includes("-")) {
-        // Backend UUID has hyphens
-        await togglePinHistory(id);
-      } else {
-        // Local timestamp
-        writeGenerationHistory(updatedHistory.filter(i => !i.id.includes("-")));
-      }
+      await togglePinHistory(id);
     } catch (e) {
       console.error(e);
     }
@@ -95,12 +94,7 @@ function History({ onOpenResults }: HistoryProps) {
       const updatedHistory = history.filter((item) => item.id !== id);
       setHistory(updatedHistory);
       setItemToDelete(null);
-
-      if (id.includes("-")) {
-        await apiDeleteHistory(id);
-      } else {
-        writeGenerationHistory(updatedHistory.filter(i => !i.id.includes("-")));
-      }
+      await apiDeleteHistory(id);
     } catch (e) {
       console.error(e);
     }
@@ -190,17 +184,14 @@ function History({ onOpenResults }: HistoryProps) {
               <article
                 key={item.id}
                 className="modern-history-card"
-                role={item.response ? "button" : undefined}
-                tabIndex={item.response ? 0 : -1}
+                role="button"
+                tabIndex={0}
                 onClick={() => {
-                  if (item.response) {
-                    onOpenResults(item.id);
-                  }
+                  onOpenResults(item.id);
                 }}
                 onKeyDown={(event) => {
                   if (
-                    item.response &&
-                    (event.key === "Enter" || event.key === " ")
+                    event.key === "Enter" || event.key === " "
                   ) {
                     event.preventDefault();
                     onOpenResults(item.id);

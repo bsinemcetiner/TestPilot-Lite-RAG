@@ -16,12 +16,8 @@ import { generateTestCases, getProviders } from "../api/apiClient";
 
 import type { GenerationResponse } from "../api/apiClient";
 
-import {
-  readGenerationHistory,
-  writeGenerationHistory,
-} from "../types/generationHistory";
-
-import type { GenerationHistoryItem } from "../types/generationHistory";
+import { getHistory } from "../api/apiClient";
+import type { BackendHistoryItem } from "../api/apiClient";
 
 const testTypeOptions = [
   "Positive",
@@ -79,17 +75,19 @@ function GenerateTests({ onOpenResults }: GenerateTestsProps) {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
 
-  const [history, setHistory] = useState<GenerationHistoryItem[]>([]);
+  const [history, setHistory] = useState<BackendHistoryItem[]>([]);
 
   const [duplicateItem, setDuplicateItem] =
-    useState<GenerationHistoryItem | null>(null);
+    useState<BackendHistoryItem | null>(null);
   const [showPageHelp, setShowPageHelp] = useState(false);
 
   const [pendingGeneration, setPendingGeneration] =
     useState<GenerationRequest | null>(null);
 
   useEffect(() => {
-    setHistory(readGenerationHistory());
+    getHistory()
+      .then(setHistory)
+      .catch(() => setHistory([]));
 
     getProviders()
       .then(setProviderOptions)
@@ -100,33 +98,6 @@ function GenerateTests({ onOpenResults }: GenerateTestsProps) {
     setSelectedTypes((prev) =>
       prev.includes(type) ? prev.filter((t) => t !== type) : [...prev, type],
     );
-  };
-
-  const saveHistory = (
-    response: GenerationResponse,
-    request: GenerationRequest,
-  ) => {
-    const entry: GenerationHistoryItem = {
-      id: `${Date.now()}`,
-      feature: request.featureName,
-      query: request.query,
-      outputFormat: request.outputFormat,
-      provider: request.provider,
-      count: response.count,
-      createdAt: new Date().toISOString(),
-      preview: response.formatted.slice(0, 120),
-      isPinned: false,
-      response,
-    };
-
-    const currentHistory = readGenerationHistory();
-
-    const nextHistory = [entry, ...currentHistory].slice(0, 20);
-
-    setHistory(nextHistory);
-    writeGenerationHistory(nextHistory);
-
-    return entry;
   };
 
   const executeGeneration = async (request: GenerationRequest) => {
@@ -143,9 +114,12 @@ function GenerateTests({ onOpenResults }: GenerateTestsProps) {
         request.provider,
       );
 
-      const savedEntry = saveHistory(response, request);
-
-      onOpenResults(savedEntry.id);
+      if (response.id) {
+        onOpenResults(response.id);
+      } else {
+        // Fallback if id is missing, though backend provides it.
+        onOpenResults();
+      }
     } catch (err) {
       const message = err instanceof Error ? err.message : "Generation failed";
 
@@ -492,14 +466,14 @@ function GenerateTests({ onOpenResults }: GenerateTestsProps) {
       <DuplicateWarningModal
         isOpen={duplicateItem !== null}
         feature={duplicateItem?.feature ?? ""}
-        createdAt={duplicateItem?.createdAt ?? ""}
-        canViewPrevious={Boolean(duplicateItem?.response)}
+        createdAt={duplicateItem?.created_at ?? ""}
+        canViewPrevious={true}
         onCancel={() => {
           setDuplicateItem(null);
           setPendingGeneration(null);
         }}
         onViewPrevious={() => {
-          if (!duplicateItem?.response) return;
+          if (!duplicateItem) return;
 
           const historyId = duplicateItem.id;
 

@@ -10,11 +10,13 @@ The system retrieves relevant requirements from an indexed knowledge base, gener
 
 ## Highlights
 
-- Upload software requirements and project documentation
+- Upload software requirements and project documentation (TXT, MD)
+- Text-based PDF extraction support (OCR is not supported)
+- Basic JSON/YAML file upload (treated as flat text for retrieval; full OpenAPI structural parsing is not yet supported)
 - Semantic retrieval using ChromaDB and Sentence Transformers
-- AI-powered software test generation
-- Automatic quality evaluation
-- Generation history with favorites
+- AI-powered software test generation (Ollama as main provider, Mock as fallback)
+- Automatic quality evaluation (Coverage, Completeness, Groundedness, Uniqueness, Specificity)
+- Generation history persisted in backend SQLite database
 - Export generated test cases
 - Modern React + TypeScript dashboard
 
@@ -65,11 +67,12 @@ Browse previous generations, search records, mark favorites and reopen saved res
 # Features
 
 - Upload and index project documentation
+- Text-based PDF extraction
 - Semantic retrieval using ChromaDB
 - AI-powered test case generation
 - Multiple test categories
-- Automatic quality evaluation
-- Generation history and favorites
+- Automatic quality evaluation with 5 key metrics
+- Generation history persisted in backend SQLite database
 - Export to JSON, CSV, Markdown and Gherkin
 
 # Workflow
@@ -92,7 +95,7 @@ E --> G[Export]
 | ------------ | ----------------------------------------------------------------------------------------------------------------------------- |
 | **Backend**  | FastAPI, SQLAlchemy, SQLite                                                                                                   |
 | **Frontend** | React 18, TypeScript, Vite, Lucide React, CSS3                                                                                |
-| **AI / RAG** | ChromaDB, Sentence Transformers, Retrieval-Augmented Generation (RAG), OpenAI, Azure OpenAI, Ollama, Azure AI Foundry (ready) |
+| **AI / RAG** | ChromaDB, Sentence Transformers, Retrieval-Augmented Generation (RAG), Ollama (Tested/Working Main), Mock (Fallback/Test), OpenAI/Azure OpenAI (Experimental/Unverified), Azure AI Foundry (Planned) |
 | **Storage**  | SQLite, ChromaDB, Browser Local Storage                                                                                       |
 
 # Installation
@@ -158,12 +161,14 @@ http://localhost:5173
 | Coverage     | Percentage of requirements addressed by generated test cases                  |
 | Completeness | Measures whether generated test cases contain all required fields             |
 | Groundedness | Indicates whether generated scenarios are supported by retrieved requirements |
+| Uniqueness   | Evaluates the diversity of the test cases and penalizes duplicates            |
+| Specificity  | Checks if the generated test steps are specific and non-generic               |
 
 ---
 
 # Future Improvements
 
-- PDF support
+- Full OpenAPI structural parsing for test generation
 - Jira integration
 - Playwright test generation
 - Cypress test generation
