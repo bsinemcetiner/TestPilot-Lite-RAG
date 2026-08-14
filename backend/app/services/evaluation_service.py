@@ -690,12 +690,6 @@ class EvaluationService:
             requirements: List[str],
             test_cases: List[Dict[str, Any]],
     ) -> Dict[str, Any]:
-        """
-        Calculates coverage requirement by requirement.
-
-        A requirement is considered covered when at least one generated
-        test case contains enough meaningful terms from that requirement.
-        """
 
         clean_requirements = [
             str(requirement).strip()
@@ -720,26 +714,21 @@ class EvaluationService:
             best_case_title = None
 
             for test_case in test_cases:
-                case_text = EvaluationService._build_test_case_text(
-                    test_case
-                )
-
                 match_score = EvaluationService._requirement_match_score(
                     requirement=requirement,
-                    test_case_text=case_text,
+                    test_case=test_case,
                 )
 
                 if match_score > best_score:
                     best_score = match_score
-                    best_case_title = test_case.get(
-                        "title",
-                        "Untitled test case",
+                    best_case_title = str(
+                        test_case.get(
+                            "title",
+                            "Untitled test case",
+                        )
                     )
 
-            # 0.50 normal requirement eşleşmesi için yeterli.
-            # Kritik sayı, kilitleme ve hata şartlarında ayrıca
-            # özel terim kontrolleri de uygulanıyor.
-            is_covered = best_score >= 0.50
+            is_covered = best_score >= 0.60
 
             if is_covered:
                 covered_requirements.append(requirement)
@@ -752,7 +741,9 @@ class EvaluationService:
                     "covered": is_covered,
                     "match_score": round(best_score, 2),
                     "matched_test_case": (
-                        best_case_title if is_covered else None
+                        best_case_title
+                        if is_covered
+                        else None
                     ),
                 }
             )
@@ -811,112 +802,235 @@ class EvaluationService:
     @staticmethod
     def _requirement_match_score(
             requirement: str,
-            test_case_text: str,
+            test_case: Dict[str, Any],
     ) -> float:
-        """
-        Measures how strongly one test case covers one requirement.
-
-        The calculation combines:
-        - meaningful token overlap,
-        - critical phrase matching,
-        - number matching,
-        - synonym normalization.
-        """
 
         requirement_tokens = EvaluationService._normalize_tokens(
             requirement
         )
 
-        case_tokens = EvaluationService._normalize_tokens(
-            test_case_text
-        )
-
-        if not requirement_tokens or not case_tokens:
+        if not requirement_tokens:
             return 0.0
 
-        common_tokens = requirement_tokens.intersection(
-            case_tokens
+        title = str(
+            test_case.get("title", "")
         )
 
-        token_coverage = (
-                len(common_tokens) / len(requirement_tokens)
+        steps = " ".join(
+            str(step)
+            for step in test_case.get("steps", [])
         )
+
+        expected_result = str(
+            test_case.get("expected_result", "")
+        )
+
+        preconditions = " ".join(
+            str(item)
+            for item in test_case.get(
+                "preconditions",
+                [],
+            )
+        )
+
+        title_tokens = EvaluationService._normalize_tokens(
+            title
+        )
+
+        step_tokens = EvaluationService._normalize_tokens(
+            steps
+        )
+
+        expected_tokens = EvaluationService._normalize_tokens(
+            expected_result
+        )
+
+        precondition_tokens = EvaluationService._normalize_tokens(
+            preconditions
+        )
+
+        def coverage(tokens: Set[str]) -> float:
+            if not requirement_tokens:
+                return 0.0
+
+            return (
+                    len(requirement_tokens & tokens)
+                    / len(requirement_tokens)
+            )
+
+        # Ana test case alanları.
+        # Title ve steps daha yüksek öneme sahip.
+        title_score = coverage(title_tokens)
+        steps_score = coverage(step_tokens)
+        expected_score = coverage(expected_tokens)
+        precondition_score = coverage(
+            precondition_tokens
+        )
+
+        text_score = (
+                title_score * 0.35
+                + steps_score * 0.30
+                + expected_score * 0.25
+                + precondition_score * 0.10
+        )
+
+        all_case_tokens = (
+                title_tokens
+                | step_tokens
+                | expected_tokens
+                | precondition_tokens
+        )
+
+        overall_text_coverage = coverage(
+            all_case_tokens
+        )
+
+        # Source reference'lar RAG tarafından requirement'a
+        # doğrudan bağlanmış olabilir. Bunları güçlü kanıt
+        # olarak kullanıyoruz.
+        source_score = 0.0
+
+        source_references = test_case.get(
+            "source_references",
+            [],
+        )
+
+        if isinstance(source_references, list):
+            for source in source_references:
+                if not isinstance(source, dict):
+                    continue
+
+                quote = str(
+                    source.get("quote", "")
+                ).strip()
+
+                if not quote:
+                    continue
+
+                quote_tokens = (
+                    EvaluationService._normalize_tokens(
+                        quote
+                    )
+                )
+
+                if not quote_tokens:
+                    continue
+
+                source_overlap = (
+                        len(
+                            requirement_tokens
+                            & quote_tokens
+                        )
+                        / len(requirement_tokens)
+                )
+
+                reverse_overlap = (
+                        len(
+                            requirement_tokens
+                            & quote_tokens
+                        )
+                        / len(quote_tokens)
+                )
+
+                current_source_score = (
+                        source_overlap * 0.70
+                        + reverse_overlap * 0.30
+                )
+
+                source_score = max(
+                    source_score,
+                    current_source_score,
+                )
+
+        # Source requirement'ı neredeyse birebir gösteriyorsa,
+        # bu en güçlü coverage kanıtıdır.
+        if source_score >= 0.90:
+            score = (
+                    source_score * 0.70
+                    + overall_text_coverage * 0.30
+            )
+
+            # Doğrudan source eşleşmesinde minimum güven.
+            score = max(score, 0.85)
+
+        else:
+            # Source zayıf/yoksa test case'in gerçek içeriğine
+            # daha fazla ağırlık ver.
+            score = (
+                    text_score * 0.55
+                    + overall_text_coverage * 0.30
+                    + source_score * 0.15
+            )
 
         requirement_lower = requirement.lower()
-        case_lower = test_case_text.lower()
 
-        bonus = 0.0
+        case_text = " ".join(
+            [
+                title,
+                steps,
+                expected_result,
+                preconditions,
+            ]
+        ).lower()
 
-        critical_groups = [
-            {
-                "invalid",
-                "incorrect",
-                "wrong",
-                "rejected",
-                "error",
-            },
-            {
-                "lock",
-                "locked",
-                "blocked",
-            },
-            {
-                "email",
-                "username",
-            },
-            {
-                "password",
-                "credential",
-                "credentials",
-            },
-            {
-                "login",
-                "sign in",
-                "authenticate",
-                "authentication",
-            },
-        ]
-
-        for group in critical_groups:
-            requirement_has_group = any(
-                term in requirement_lower
-                for term in group
-            )
-
-            case_has_group = any(
-                term in case_lower
-                for term in group
-            )
-
-            if requirement_has_group and case_has_group:
-                bonus += 0.08
-
+        # Sayısal constraint varsa sayı source'ta veya
+        # test case'in kendisinde bulunmalı.
         requirement_numbers = set(
-            re.findall(r"\d+", requirement_lower)
+            re.findall(
+                r"\d+",
+                requirement_lower,
+            )
         )
 
         case_numbers = set(
-            re.findall(r"\d+", case_lower)
+            re.findall(
+                r"\d+",
+                case_text,
+            )
         )
 
+        source_numbers: Set[str] = set()
+
+        if isinstance(source_references, list):
+            for source in source_references:
+                if not isinstance(source, dict):
+                    continue
+
+                quote = str(
+                    source.get("quote", "")
+                )
+
+                source_numbers.update(
+                    re.findall(
+                        r"\d+",
+                        quote.lower(),
+                    )
+                )
+
         if requirement_numbers:
-            if requirement_numbers.issubset(case_numbers):
-                bonus += 0.15
+            numbers_found = (
+                    requirement_numbers.issubset(
+                        case_numbers
+                    )
+                    or requirement_numbers.issubset(
+                source_numbers
+            )
+            )
+
+            if numbers_found:
+                score += 0.05
             else:
-                bonus -= 0.20
+                score -= 0.20
 
-        final_score = token_coverage + bonus
-
-        return max(0.0, min(final_score, 1.0))
+        return max(
+            0.0,
+            min(score, 1.0),
+        )
 
     @staticmethod
     def _normalize_tokens(
             text: str,
     ) -> Set[str]:
-        """
-        Normalizes words and maps basic testing synonyms to
-        common terms before comparison.
-        """
 
         normalized_text = str(text).lower()
 
@@ -924,16 +1038,42 @@ class EvaluationService:
             "sign-in": "login",
             "sign in": "login",
             "log in": "login",
+
             "authenticated": "authentication",
             "authenticate": "authentication",
+
             "credentials": "credential",
+
             "incorrect": "invalid",
             "wrong": "invalid",
-            "rejected": "error",
-            "blocked": "locked",
-            "lock": "locked",
-            "attempts": "attempt",
+
             "addresses": "address",
+            "emails": "email",
+            "usernames": "username",
+            "passwords": "password",
+
+            "registered": "register",
+            "registration": "register",
+            "registering": "register",
+
+            "rejected": "reject",
+            "rejects": "reject",
+            "rejecting": "reject",
+
+            "displayed": "display",
+            "displays": "display",
+            "displaying": "display",
+
+            "created": "create",
+            "creates": "create",
+            "creating": "create",
+
+            "characters": "character",
+            "fields": "field",
+            "messages": "message",
+            "requirements": "requirement",
+            "matches": "match",
+            "matching": "match",
         }
 
         for source, target in replacements.items():
@@ -966,10 +1106,6 @@ class EvaluationService:
             "being",
             "must",
             "should",
-            "after",
-            "before",
-            "than",
-            "then",
             "this",
             "that",
             "it",

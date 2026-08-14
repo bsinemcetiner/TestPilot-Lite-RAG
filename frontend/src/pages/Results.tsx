@@ -41,6 +41,14 @@ function InfoTooltip({ text }: { text: string }) {
   );
 }
 
+function formatSourceId(value: string) {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/\b\w/g, (char) => char.toUpperCase())
+    .trim();
+}
+
 function Results({
   selectedHistoryId,
   onSelectedHistoryIdChange,
@@ -48,7 +56,9 @@ function Results({
   const [history, setHistory] = useState<BackendHistoryItem[]>([]);
   const [showPageHelp, setShowPageHelp] = useState(false);
   const [loadingBackend, setLoadingBackend] = useState(false);
-  const [backendResult, setBackendResult] = useState<GenerationResponse | null>(null);
+  const [backendResult, setBackendResult] = useState<GenerationResponse | null>(
+    null,
+  );
 
   useEffect(() => {
     import("../api/apiClient").then(({ getHistory }) => {
@@ -77,23 +87,26 @@ function Results({
   useEffect(() => {
     if (!selectedHistoryId) return;
 
-    const item = history.find(i => i.id === selectedHistoryId);
+    const item = history.find((i) => i.id === selectedHistoryId);
     if (!item) return;
 
     setLoadingBackend(true);
     import("../api/apiClient").then(({ getHistoryDetail }) => {
-      getHistoryDetail(item.id).then(detail => {
-        const mappedResponse: GenerationResponse = {
-          feature: detail.feature,
-          count: detail.requested_count,
-          provider: detail.provider,
-          retrieved_chunks: detail.retrieved_chunks_count,
-          formatted: detail.formatted_output || "",
-          evaluation: detail.evaluation_metrics,
-          test_cases: detail.test_cases
-        };
-        setBackendResult(mappedResponse);
-      }).catch(console.error).finally(() => setLoadingBackend(false));
+      getHistoryDetail(item.id)
+        .then((detail) => {
+          const mappedResponse: GenerationResponse = {
+            feature: detail.feature,
+            count: detail.requested_count,
+            provider: detail.provider,
+            retrieved_chunks: detail.retrieved_chunks_count,
+            formatted: detail.formatted_output || "",
+            evaluation: detail.evaluation_metrics,
+            test_cases: detail.test_cases,
+          };
+          setBackendResult(mappedResponse);
+        })
+        .catch(console.error)
+        .finally(() => setLoadingBackend(false));
     });
   }, [selectedHistoryId, history]);
 
@@ -332,44 +345,98 @@ function Results({
             </section>
           )}
 
-          {result.evaluation && result.evaluation.requirement_coverage_details && result.evaluation.requirement_coverage_details.length > 0 && (
-            <section className="card results-coverage-card">
-              <div className="results-section-header">
-                <div>
-                  <p className="eyebrow">Coverage</p>
-                  <h2>Requirement Coverage Matrix</h2>
+          {result.evaluation &&
+            result.evaluation.requirement_coverage_details &&
+            result.evaluation.requirement_coverage_details.length > 0 && (
+              <section className="card results-coverage-card">
+                <div className="results-section-header">
+                  <div>
+                    <p className="eyebrow">Coverage</p>
+                    <h2>Requirement Coverage Matrix</h2>
+                  </div>
                 </div>
-              </div>
-              <div className="table-responsive" style={{ overflowX: "auto", marginTop: "1rem" }}>
-                <table className="results-table" style={{ width: "100%", textAlign: "left", borderCollapse: "collapse" }}>
-                  <thead>
-                    <tr style={{ borderBottom: "1px solid var(--border-color)", paddingBottom: "0.5rem" }}>
-                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Requirement</th>
-                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Status</th>
-                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Match Score</th>
-                      <th style={{ padding: "0.75rem", fontWeight: 600 }}>Matched Test Case</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {result.evaluation.requirement_coverage_details.map((detail, idx) => (
-                      <tr key={idx} style={{ borderBottom: "1px solid var(--border-color)" }}>
-                        <td style={{ padding: "0.75rem" }}>{detail.requirement}</td>
-                        <td style={{ padding: "0.75rem" }}>
-                          {detail.covered ? (
-                            <span className="badge badge-positive" style={{ background: "var(--positive-bg)", color: "var(--positive-fg)" }}>Covered</span>
-                          ) : (
-                            <span className="badge badge-negative" style={{ background: "var(--negative-bg)", color: "var(--negative-fg)" }}>Uncovered</span>
-                          )}
-                        </td>
-                        <td style={{ padding: "0.75rem" }}>{detail.match_score}</td>
-                        <td style={{ padding: "0.75rem" }}>{detail.matched_test_case || "-"}</td>
+                <div
+                  className="table-responsive"
+                  style={{ overflowX: "auto", marginTop: "1rem" }}
+                >
+                  <table
+                    className="results-table"
+                    style={{
+                      width: "100%",
+                      textAlign: "left",
+                      borderCollapse: "collapse",
+                    }}
+                  >
+                    <thead>
+                      <tr
+                        style={{
+                          borderBottom: "1px solid var(--border-color)",
+                          paddingBottom: "0.5rem",
+                        }}
+                      >
+                        <th style={{ padding: "0.75rem", fontWeight: 600 }}>
+                          Requirement
+                        </th>
+                        <th style={{ padding: "0.75rem", fontWeight: 600 }}>
+                          Status
+                        </th>
+                        <th style={{ padding: "0.75rem", fontWeight: 600 }}>
+                          Match Score
+                        </th>
+                        <th style={{ padding: "0.75rem", fontWeight: 600 }}>
+                          Matched Test Case
+                        </th>
                       </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
+                    </thead>
+                    <tbody>
+                      {result.evaluation.requirement_coverage_details.map(
+                        (detail, idx) => (
+                          <tr
+                            key={idx}
+                            style={{
+                              borderBottom: "1px solid var(--border-color)",
+                            }}
+                          >
+                            <td style={{ padding: "0.75rem" }}>
+                              {detail.requirement}
+                            </td>
+                            <td style={{ padding: "0.75rem" }}>
+                              {detail.covered ? (
+                                <span
+                                  className="badge badge-positive"
+                                  style={{
+                                    background: "var(--positive-bg)",
+                                    color: "var(--positive-fg)",
+                                  }}
+                                >
+                                  Covered
+                                </span>
+                              ) : (
+                                <span
+                                  className="badge badge-negative"
+                                  style={{
+                                    background: "var(--negative-bg)",
+                                    color: "var(--negative-fg)",
+                                  }}
+                                >
+                                  Uncovered
+                                </span>
+                              )}
+                            </td>
+                            <td style={{ padding: "0.75rem" }}>
+                              {detail.match_score}
+                            </td>
+                            <td style={{ padding: "0.75rem" }}>
+                              {detail.matched_test_case || "-"}
+                            </td>
+                          </tr>
+                        ),
+                      )}
+                    </tbody>
+                  </table>
+                </div>
+              </section>
+            )}
 
           <section className="card results-export-card">
             <div className="results-section-header">
@@ -486,7 +553,9 @@ function Results({
                           <strong>{reference.document_name}</strong>
 
                           {reference.chunk_id && (
-                            <span>{reference.chunk_id}</span>
+                            <span title={reference.chunk_id}>
+                              {formatSourceId(reference.chunk_id)}
+                            </span>
                           )}
 
                           {reference.quote && <p>{reference.quote}</p>}
