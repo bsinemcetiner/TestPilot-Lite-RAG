@@ -304,13 +304,33 @@ function Results({
                     <BarChart3 size={20} />
                   </span>
 
-                  <InfoTooltip text="Percentage of extracted requirements addressed by the generated tests." />
+                  <InfoTooltip text="Percentage of source document requirements addressed by the generated test cases." />
                 </div>
 
                 <strong>{result.evaluation.coverage_score}%</strong>
 
                 <span>Coverage</span>
-                <p>Requirements addressed by the scenarios.</p>
+                {result.evaluation.requirement_coverage_details &&
+                result.evaluation.requirement_coverage_details.length > 0 ? (
+                  <>
+                    <p>
+                      {
+                        result.evaluation.requirement_coverage_details.filter(
+                          (d) => d.covered,
+                        ).length
+                      }{" "}
+                      of{" "}
+                      {result.evaluation.requirement_coverage_details.length}{" "}
+                      requirements covered.
+                    </p>
+                    <p className="result-metric-helper">
+                      {result.count} requested cases generated. Coverage
+                      reflects the entire source document.
+                    </p>
+                  </>
+                ) : (
+                  <p>Requirements addressed by the scenarios.</p>
+                )}
               </article>
 
               <article className="result-metric-card">
@@ -319,7 +339,7 @@ function Results({
                     <CheckCircle2 size={20} />
                   </span>
 
-                  <InfoTooltip text="Percentage of test cases containing all required fields." />
+                  <InfoTooltip text="Checks whether generated cases contain all required structured fields (title, steps, expected result, etc.)." />
                 </div>
 
                 <strong>{result.evaluation.completeness_score}%</strong>
@@ -334,13 +354,13 @@ function Results({
                     <ShieldCheck size={20} />
                   </span>
 
-                  <InfoTooltip text="Percentage of generated cases supported by retrieved source documents." />
+                  <InfoTooltip text="Percentage of generated cases linked to indexed source requirements." />
                 </div>
 
                 <strong>{result.evaluation.groundedness_score}%</strong>
 
                 <span>Groundedness</span>
-                <p>Scenarios supported by indexed sources.</p>
+                <p>Test cases linked to indexed source requirements.</p>
               </article>
             </section>
           )}
@@ -507,6 +527,13 @@ function Results({
                         {testCase.priority}
                       </span>
                     </div>
+
+                    {testCase.source_references?.[0]?.chunk_id && (
+                      <p className="result-source-req-label">
+                        Source Requirement:{" "}
+                        {testCase.source_references[0].chunk_id}
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -554,11 +581,11 @@ function Results({
 
                           {reference.chunk_id && (
                             <span title={reference.chunk_id}>
-                              {formatSourceId(reference.chunk_id)}
+                              Requirement {formatSourceId(reference.chunk_id)}
                             </span>
                           )}
 
-                          {reference.quote && <p>{reference.quote}</p>}
+                          {reference.quote && <p>"{reference.quote}"</p>}
                         </article>
                       ))}
                     </div>

@@ -12,7 +12,7 @@ from sqlalchemy.orm import Session
 from fastapi import Depends
 
 from app.db.database import SessionLocal
-from app.db.models import GenerationRun, GeneratedTestCase
+from app.db.models import Document, GenerationRun, GeneratedTestCase
 from app.schemas.history import GenerationRunResponse, GenerationRunDetailResponse
 
 
@@ -104,9 +104,16 @@ def generate_test_cases(request: GenerationRequest, db: Session = Depends(get_db
     try:
         retrieval_query = f"{request.feature_name}\n{request.query}"
 
+        # Prefer document-scoped retrieval when we can identify the document by name.
+        doc_record = db.query(Document).filter(
+            Document.name.ilike(request.feature_name.strip())
+        ).first()
+        document_id_filter = doc_record.id if doc_record else None
+
         retrieved = RAGService.retrieve_context(
             retrieval_query,
             n_results=50,
+            document_id=document_id_filter,
         )
 
         if not retrieved:

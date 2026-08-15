@@ -54,12 +54,7 @@ class ChunkingService:
                 if not requirement_text:
                     continue
 
-                # Keep document header with the first requirement
-                # so retrieval still knows which feature it belongs to.
-                if index == 0 and header:
-                    chunk = f"{header}\n\n{requirement_text}"
-                else:
-                    chunk = requirement_text
+                chunk = requirement_text
 
                 chunks.append(chunk)
 

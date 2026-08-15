@@ -4,13 +4,19 @@ from app.services.vector_store import VectorStoreService
 
 class RAGService:
     @staticmethod
-    def retrieve_context(query: str, n_results: int = 5) -> list:
+    def retrieve_context(query: str, n_results: int = 5, document_id: int = None) -> list:
         """
         Retrieve relevant document chunks for a query.
-        Returns list of (chunk_text, metadata) tuples.
+        Returns list of dicts with 'text' and 'metadata' keys.
+        When document_id is provided, search is scoped to that document only.
         """
         query_embedding = EmbeddingService.embed_text(query)
-        results = VectorStoreService.search(query_embedding, n_results=n_results)
+        if document_id is not None:
+            results = VectorStoreService.search_by_document(
+                query_embedding, document_id, n_results=n_results
+            )
+        else:
+            results = VectorStoreService.search(query_embedding, n_results=n_results)
         
         if not results or not results.get('documents'):
             return []

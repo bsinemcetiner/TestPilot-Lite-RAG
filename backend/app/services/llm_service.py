@@ -2,7 +2,6 @@ import logging
 from typing import List, Dict, Any, Tuple
 
 from app.llm.provider_factory import LLMProviderFactory
-from app.llm.mock_provider import MockLLMProvider
 
 logger = logging.getLogger(__name__)
 
@@ -29,18 +28,9 @@ class LLMService:
             )
             return cases, provider.provider_name
         except Exception as exc:
-            logger.warning(
-                "LLM provider failed (%s): %s. Falling back to mock provider.",
+            logger.exception(
+                "LLM provider failed (%s): %s",
                 provider.provider_name,
                 str(exc),
             )
-            fallback = MockLLMProvider()
-            cases = fallback.generate_test_cases(
-                feature_name=feature_name,
-                query=query,
-                retrieved_context=retrieved_context,
-                test_types=test_types,
-                num_cases=num_cases,
-            )
-            # Return with explicit fallback indicator
-            return cases, "mock_fallback"
+            raise

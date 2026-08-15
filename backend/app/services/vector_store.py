@@ -105,6 +105,37 @@ class VectorStoreService:
         }
 
     @classmethod
+    def search_by_document(cls, query_embedding, doc_id: int, n_results: int = 5):
+        """Search for similar chunks within a specific document."""
+        collection = cls.get_collection()
+        if collection is not None:
+            return collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where={"document_id": {"$eq": doc_id}}
+            )
+
+        if not cls._fallback_store:
+            return {"documents": [[]], "metadatas": [[]], "distances": [[]]}
+
+        query_vector = cls._to_vector(query_embedding)
+        ranked = []
+        for item in cls._fallback_store:
+            if item.get("document_id") != doc_id:
+                continue
+            score = cls._cosine_similarity(query_vector, cls._to_vector(item["embedding"]))
+            ranked.append((score, item))
+
+        ranked.sort(key=lambda entry: entry[0], reverse=True)
+        top_items = ranked[:n_results]
+
+        return {
+            "documents": [[item["document"] for _, item in top_items]],
+            "metadatas": [[item["metadata"] for _, item in top_items]],
+            "distances": [[max(0.0, 1.0 - score) for score, _ in top_items]],
+        }
+
+    @classmethod
     def delete_document_chunks(cls, doc_id: int):
         """Delete all chunks for a document."""
         collection = cls.get_collection()

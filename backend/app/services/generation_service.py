@@ -36,13 +36,8 @@ class TestCaseGenerator:
                 num_cases=num_cases,
                 provider_name=provider_name,
             )
-        except Exception as exc:
-            print(
-                f"LLM generation failed: "
-                f"{type(exc).__name__}: {exc}"
-            )
-            raw_cases = []
-            used_provider = "mock_fallback"
+        except Exception:
+            raise
 
         if not isinstance(raw_cases, list):
             raw_cases = []

@@ -1607,14 +1607,32 @@
 }
 
 .result-source-item strong {
+  display: block;
   color: #334155;
   font-size: 0.75rem;
+  margin-bottom: 3px;
 }
 
 .result-source-item > span {
-  margin-left: 7px;
+  display: block;
   color: #6366f1;
-  font-size: 0.68rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.result-source-req-label {
+  margin: 4px 0 0;
+  font-size: 0.72rem;
+  color: #6366f1;
+  font-weight: 500;
+}
+
+.result-metric-helper {
+  margin-top: 4px;
+  font-size: 0.7rem;
+  color: #94a3b8;
+  line-height: 1.4;
 }
 
 .result-source-item p {
