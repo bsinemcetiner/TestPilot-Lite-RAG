@@ -1,7 +1,8 @@
+import json
+import logging
 import os
 import re
-import json
-from typing import List, Dict, Any
+from typing import Any, Dict, List
 
 try:
     import requests
@@ -10,281 +11,709 @@ except ImportError:
 
 from app.llm.base_provider import LLMProvider
 
+logger = logging.getLogger(__name__)
+
 
 class OllamaProvider(LLMProvider):
-    name = 'ollama'
+    name = "ollama"
+
+    MAX_ATTEMPTS = 3
+    REQUEST_TIMEOUT = 120
+
+    ALLOWED_TYPES = [
+        "Positive",
+        "Negative",
+        "Edge Case",
+        "Validation",
+        "Security",
+    ]
+
+    ALLOWED_PRIORITIES = [
+        "High",
+        "Medium",
+        "Low",
+    ]
 
     def __init__(self):
         if requests is None:
-            raise ImportError('requests package is not installed')
+            raise ImportError("requests package is not installed")
 
-        self.base_url = os.getenv('OLLAMA_BASE_URL', 'http://localhost:11434')
-        self.model = os.getenv('OLLAMA_MODEL', 'llama2')
+        self.base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434").rstrip("/")
+        self.model = os.getenv("OLLAMA_MODEL", "llama2")
+
+    # ============================================================
+    # PUBLIC GENERATION
+    # ============================================================
 
     def generate_test_cases(
-        self,
-        feature_name: str,
-        query: str,
-        retrieved_context: List[Dict[str, Any]],
-        test_types: List[str],
-        num_cases: int,
+            self,
+            feature_name: str,
+            query: str,  # Base interface için alıyoruz ama LLM'e GÖNDERMEYECEĞİZ.
+            retrieved_context: List[Dict[str, Any]],
+            test_types: List[str],
+            num_cases: int,
     ) -> List[Dict[str, Any]]:
-        context_text = '\n\n'.join(
-            [f"[{i+1}] {item['metadata'].get('document_name', 'Unknown')}: {item['text']}" for i, item in enumerate(retrieved_context)]
+
+        if num_cases <= 0:
+            raise ValueError("num_cases must be greater than zero")
+
+        if not retrieved_context:
+            raise ValueError("No retrieved context was supplied to Ollama.")
+
+        allowed_test_types = self._prepare_test_types(test_types)
+
+        target_requirements = self._select_target_requirements(
+            retrieved_context=retrieved_context,
+            num_cases=num_cases
         )
 
-        test_types_str = ', '.join(test_types) if test_types else 'Positive, Negative, Edge Case'
-        
-        prompt = (
-            f"You are a test generation assistant that creates tests EXCLUSIVELY from provided requirements.\n\n"
-            f"TASK: Generate EXACTLY {num_cases} test cases for '{feature_name}'\n\n"
-            f"CRITICAL RULE - SOURCE-GROUNDED GENERATION:\n"
-            f"- Each test case MUST be derived ONLY from the actual requirements in the retrieved context below\n"
-            f"- Do NOT invent behaviors, edge cases, or security scenarios NOT explicitly mentioned in the context\n"
-            f"- Do NOT use generic terms like 'perform action', 'verify result', 'handle gracefully'\n"
-            f"- The 'steps' array MUST contain AT LEAST 3 concrete steps. 1 or 2 steps are NOT accepted.\n"
-            f"- Do NOT generate generic filler steps; every single step MUST be specific to the requirements.\n"
-            f"- Each step MUST directly reference or quote a specific requirement from the context\n"
-            f"- Each expected_result MUST be stated or implied in the requirements\n"
-            f"- If a test type (Positive/Negative/Edge Case) lacks explicit requirement data, use only what IS documented\n\n"
-            f"TEST DISTRIBUTION:\n"
-            f"- Return EXACTLY {num_cases} test cases (no more, no less)\n"
-            f"- Distribute across: {test_types_str}\n"
-            f"- Each case type must have a basis in the retrieved context\n\n"
-            f"RETRIEVED REQUIREMENTS (source of truth - use ONLY these):\n"
-            f"{context_text}\n\n"
-            f"USER QUERY (context for test focus):\n{query}\n\n"
-            f"OUTPUT FORMAT - Return EXACTLY {num_cases} JSON objects in an array:\n\n"
-            f"Each test case MUST have this structure:\n"
-            f"{{\n"
-            f'  "title": "test name based on actual requirement",\n'
-            f'  "type": "Positive" (or one of: {test_types_str}),\n'
-            f'  "priority": "High",\n'
-            f'  "preconditions": ["precondition 1", "precondition 2"],\n'
-            f'  "steps": ["action 1", "action 2", "action 3"],\n'
-            f'  "expected_result": "outcome from requirements",\n'
-            f'  "source_references": [\n'
-            f'    {{\n'
-            f'      "document_name": "Exact document name",\n'
-            f'      "chunk_id": "Chunk identifier",\n'
-            f'      "quote": "Exact supporting text from context"\n'
-            f'    }}\n'
-            f'  ],\n'
-            f'  "confidence": 0.9\n'
-            f"}}\n\n"
-            f"IMPORTANT:\n"
-            f"- source_references is a LIST of objects, not strings\n"
-            f"- Each object must have: document_name (string), chunk_id (string), quote (string)\n"
-            f"- Include at least one source_reference with exact quote from requirements\n"
-            f"- confidence: use 0.8-1.0 if fully grounded in context\n\n"
-            f"Return ONLY a valid JSON array of exactly {num_cases} objects. No explanation text outside the JSON."
+        response_schema = self._build_single_case_schema(allowed_test_types)
+        final_test_cases = []
+
+        for i, (chunk_index, context_item) in enumerate(target_requirements, start=1):
+            logger.info("Generating case %s/%s based on chunk R%s", i, num_cases, chunk_index + 1)
+
+            case_result = self._generate_single_case_with_retry(
+                feature_name=feature_name,
+                context_item=context_item,
+                test_types=allowed_test_types,
+                response_schema=response_schema,
+                chunk_index=chunk_index,
+                case_number=i
+            )
+
+            final_test_cases.append(case_result)
+
+        return final_test_cases
+
+    def _generate_single_case_with_retry(
+            self,
+            feature_name: str,
+            context_item: Dict[str, Any],
+            test_types: List[str],
+            response_schema: Dict[str, Any],
+            chunk_index: int,
+            case_number: int
+    ) -> Dict[str, Any]:
+
+        requirement_text = str(context_item.get("text", "")).strip()
+
+
+
+        base_prompt = self._build_single_case_prompt(
+            feature_name=feature_name,
+            requirement_text=requirement_text,
+            test_types=test_types,
         )
 
+        last_error = None
+
+        for attempt in range(1, self.MAX_ATTEMPTS + 1):
+            prompt = base_prompt
+            if attempt > 1:
+                prompt += (
+                    "\n\nRETRY INSTRUCTION:\n"
+                    "Your previous response failed validation. "
+                    "Generate the case again using ONLY behavior explicitly stated "
+                    "in the TARGET REQUIREMENT. "
+                    "Do not introduce related workflow behavior from other requirements. "
+                    "Do not add login, logout, email delivery, redirects, account changes, "
+                    "or other actions unless the TARGET REQUIREMENT explicitly mentions them. "
+                    "Return exactly ONE valid JSON object matching the schema."
+                )
+
+            try:
+                raw_text = self._call_ollama(
+                    prompt=prompt,
+                    response_schema=response_schema,
+                )
+
+                parsed_case = self._parse_single_response(raw_text)
+
+                parsed_case["_requirement_text"] = requirement_text
+
+                normalized = self._normalize_case_fields(
+                    parsed_case,
+                    test_types,
+                )
+
+                if len(normalized.get("steps", [])) < 3:
+                    raise ValueError(
+                        "Generated test case has fewer than 3 valid steps after normalization."
+                    )
+
+                self._validate_contradiction(requirement_text, normalized["expected_result"])
+                self._validate_semantic_grounding(
+                    requirement_text=requirement_text,
+                    case=normalized,
+                )
+
+                final_case = self._attach_source_reference(
+                    case=normalized,
+                    context_item=context_item,
+                    chunk_index=chunk_index
+                )
+
+                return final_case
+
+            except Exception as exc:
+                last_error = exc
+                logger.warning("Attempt %s failed for case %s: %s", attempt, case_number, exc)
+
+        raise ValueError(
+            f"Failed to generate valid test case for requirement R{chunk_index + 1} "
+            f"after {self.MAX_ATTEMPTS} attempts. Last error: {last_error}"
+        )
+
+    # ============================================================
+    # PROMPT (One-Shot Example & No Query)
+    # ============================================================
+
+    def _build_single_case_prompt(
+            self,
+            feature_name: str,
+            requirement_text: str,
+            test_types: List[str],
+    ) -> str:
+
+        test_types_str = ", ".join(test_types)
+
+        return (
+            "You are a strict, literal QA automation engineer. "
+            "Your ONLY job is to write EXACTLY ONE test case for the SINGLE requirement provided below.\n\n"
+
+            f"FEATURE: {feature_name}\n\n"
+
+            "TARGET REQUIREMENT TO TEST:\n"
+            f"\"{requirement_text}\"\n\n"
+
+            "RULES:\n"
+            "1. ONLY test the specific behavior described in the TARGET REQUIREMENT.\n"
+            "2. STOP the test immediately after verifying this exact requirement. Do not add end-to-end steps (like checking emails or logging in) unless explicitly stated in the target requirement.\n"
+            "3. If the requirement says 'must not', 'reject', 'not allow', or 'no longer accepted', "
+            "the expected_result MUST explicitly describe rejection or prevention. "
+            "If the requirement only defines an expiration or time limit, verify that exact expiration behavior instead.\n"
+            f"4. Allowed types: {test_types_str}\n"
+            "5. Return ONLY a single JSON object. Do not wrap it in an array.\n\n"
+            "6. The expected_result must describe ONLY the observable behavior stated by the target requirement.\n"
+            "7. Do not add navigation, logout, login redirects, emails, account state changes, or other behavior unless explicitly stated in the target requirement.\n"
+            "8. Every step must be a real executable action or verification step. Never output JSON punctuation such as ']', '},' or similar text as a step.\n"
+            "9. If the requirement describes a validation rule, test that exact validation rule and all constraints explicitly listed in it.\n"
+            "10. Every explicit constraint listed in the TARGET REQUIREMENT must be covered by the test case.\n"
+            "11. Do not claim that an error message, notification, redirect, status change, or other UI behavior occurs unless the TARGET REQUIREMENT explicitly states it.\n"
+            "12. Do not replace the subject of the requirement with a related concept. For example, if the requirement describes a password rule, the steps must operate on the password itself, not on a password reset request.\n"
+
+            "EXAMPLE OF EXPECTED ISOLATION LEVEL:\n"
+"Target Requirement: 'The system must reject values below the minimum allowed limit.'\n"
+"{\n"
+'  "title": "Reject value below minimum limit",\n'
+'  "type": "Validation",\n'
+'  "priority": "High",\n'
+'  "preconditions": ["The relevant form is available"],\n'
+'  "steps": [\n'
+'    "Open the form containing the validated field",\n'
+'    "Enter a value below the documented minimum limit",\n'
+'    "Submit the form"\n'
+'  ],\n'
+'  "expected_result": "The system rejects the value and does not complete the operation.",\n'
+'  "confidence": 0.95\n'
+"}\n\n"
+
+            "Now, generate the JSON object for the TARGET REQUIREMENT."
+        )
+
+    # ============================================================
+    # REQUIREMENT SELECTION
+    # ============================================================
+
+    def _select_target_requirements(
+            self,
+            retrieved_context: List[Dict[str, Any]],
+            num_cases: int
+    ) -> List[tuple[int, Dict[str, Any]]]:
+
+        valid_contexts = []
+
+        seen_texts = set()
+
+        for idx, ctx in enumerate(retrieved_context):
+            text = re.sub(
+                r"\s+",
+                " ",
+                str(ctx.get("text", "")).strip()
+            )
+
+            if not text:
+                continue
+
+            # Remove markdown/header noise from comparison.
+            signature = re.sub(
+                r"[^a-z0-9]+",
+                " ",
+                text.lower()
+            ).strip()
+
+            if signature in seen_texts:
+                continue
+
+            seen_texts.add(signature)
+            valid_contexts.append((idx, ctx))
+
+        if not valid_contexts:
+            raise ValueError(
+                "No valid requirements found in retrieved context."
+            )
+
+        if num_cases > len(valid_contexts):
+            raise ValueError(
+                f"Requested {num_cases} test cases but only "
+                f"{len(valid_contexts)} distinct requirements are available."
+            )
+
+        # Prefer requirements with explicit validation / rejection /
+        # boundary behavior so cases are not all positive.
+        def requirement_priority(item):
+            _, ctx = item
+            text = str(ctx.get("text", "")).lower()
+
+            if any(keyword in text for keyword in [
+                "must not",
+                "reject",
+                "invalid",
+                "expire",
+                "no longer",
+                "at least",
+                "must contain",
+                "must exactly",
+            ]):
+                return 0
+
+            return 1
+
+        ranked = sorted(
+            valid_contexts,
+            key=requirement_priority,
+        )
+
+        return ranked[:num_cases]
+
+    # ============================================================
+    # OLLAMA REQUEST
+    # ============================================================
+
+    def _call_ollama(self, prompt: str, response_schema: Dict[str, Any]) -> str:
         url = f"{self.base_url}/api/generate"
-        response = requests.post(url, json={
-            'model': self.model,
-            'prompt': prompt,
-            'stream': False,
-            'format': 'json',
-        })
-        response.raise_for_status()
 
-        data = response.json()
-        text = data.get('response', '')
-        test_cases = self._parse_response(text, num_cases, retrieved_context)
-        return test_cases
+        payload = {
+            "model": self.model,
+            "prompt": prompt,
+            "stream": False,
+            "format": response_schema,
+            "options": {
+                "temperature": 0.1,
+                "num_predict": 800,
+            },
+        }
 
-    def _parse_response(self, text: str, num_cases: int, retrieved_context: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Parse Ollama response which may contain JSON with optional markdown wrapping.
-        Try direct parsing first, then fallback to markdown/regex extraction.
-        Normalizes source_references format if needed.
-        """
-        if not text or not isinstance(text, str):
-            raise ValueError('Ollama provider returned empty or invalid response')
-
-        original_text = text
-        text = text.strip()
-
-        # Strategy 1: Try direct JSON parsing first (handles valid JSON array/dict)
         try:
-            data = json.loads(text)
-            return self._process_parsed_data(data, num_cases, retrieved_context)
-        except json.JSONDecodeError:
-            pass  # Try next strategy
+            response = requests.post(url, json=payload, timeout=self.REQUEST_TIMEOUT)
+            response.raise_for_status()
+        except requests.RequestException as exc:
+            raise RuntimeError(f"Ollama request failed: {exc}") from exc
 
-        # Strategy 2: Try markdown fence extraction if direct parse failed
-        json_match = re.search(r'```(?:json)?\s*([\s\S]*?)```', text)
-        if json_match:
-            text = json_match.group(1).strip()
-            try:
-                data = json.loads(text)
-                return self._process_parsed_data(data, num_cases, retrieved_context)
-            except json.JSONDecodeError:
-                pass  # Try next strategy
+        text = response.json().get("response", "").strip()
+        if not text:
+            raise ValueError("Ollama returned an empty response.")
 
-        # Strategy 3: Try JSON array regex extraction as last fallback
-        json_array_match = re.search(r'\[\s*\{[\s\S]*?\}\s*\]', text)
-        if json_array_match:
-            text = json_array_match.group(0).strip()
-            try:
-                data = json.loads(text)
-                return self._process_parsed_data(data, num_cases, retrieved_context)
-            except json.JSONDecodeError:
-                pass  # Fall through to error
+        return text
 
-        # All parsing strategies failed
-        raise ValueError(f'Ollama provider returned invalid JSON response: {original_text[:200]}')
+    # ============================================================
+    # JSON SCHEMA
+    # ============================================================
 
-    def _process_parsed_data(self, data: Any, num_cases: int, retrieved_context: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-        """
-        Process successfully parsed JSON data (list or dict).
-        Handles wrapper objects and normalizes source_references.
-        """
-
-        
-        if isinstance(data, list):
-            # Already an array of test cases
-            normalized_cases = []
-            for case in data:
-                if isinstance(case, dict):
-                    case = self._normalize_source_references(case, retrieved_context)
-                    normalized_cases.append(case)
-            
-            if len(normalized_cases) >= num_cases:
-                return normalized_cases[:num_cases]
-            elif len(normalized_cases) > 0:
-                return normalized_cases
-            else:
-                raise ValueError('Ollama provider returned empty array')
-        
-        elif isinstance(data, dict):
-            # Check for wrapper keys containing test cases array or string
-            wrapper_keys = ['test_cases', 'tests', 'cases', 'response', 'output', 'results', 'testCases']
-            
-            for wrapper_key in wrapper_keys:
-                if wrapper_key not in data:
-                    continue
-                
-                value = data[wrapper_key]
-                
-                
-                # If value is list, process as test cases
-                if isinstance(value, list):
-
-                    normalized_cases = []
-                    for case in value:
-                        if isinstance(case, dict):
-                            case = self._normalize_source_references(case, retrieved_context)
-                            normalized_cases.append(case)
-                    
-                    if len(normalized_cases) >= num_cases:
-                        return normalized_cases[:num_cases]
-                    elif len(normalized_cases) > 0:
-                        return normalized_cases
-                    else:
-                        raise ValueError(f'Ollama wrapper "{wrapper_key}" contained empty array')
-                
-                # If value is string, try to parse as JSON
-                elif isinstance(value, str):
-
-                    try:
-                        parsed_value = json.loads(value)
-                        if isinstance(parsed_value, list):
-
-                            normalized_cases = []
-                            for case in parsed_value:
-                                if isinstance(case, dict):
-                                    case = self._normalize_source_references(case, retrieved_context)
-                                    normalized_cases.append(case)
-                            
-                            if len(normalized_cases) >= num_cases:
-                                return normalized_cases[:num_cases]
-                            elif len(normalized_cases) > 0:
-                                return normalized_cases
-                        elif isinstance(parsed_value, dict):
-
-                            parsed_value = self._normalize_source_references(parsed_value, retrieved_context)
-                            return [parsed_value]
-                    except json.JSONDecodeError:
-                        pass  # Continue to next key
-            
-            # No wrapper key with array found
-            # Check if dict itself is a test case (has title, type, steps, etc.)
-            test_case_fields = {'title', 'type', 'priority', 'preconditions', 'steps', 'expected_result'}
-            if any(field in data for field in test_case_fields):
-
-                normalized = self._normalize_source_references(data, retrieved_context)
-                return [normalized]
-            else:
-
-                raise ValueError(f"Ollama dict has no test_cases array or test case fields. Keys: {list(data.keys())}")
-        
-        else:
-            raise ValueError(f'Ollama response must be JSON array or dict, got {type(data).__name__}')
-
-    def _normalize_source_references(self, case: Dict[str, Any], retrieved_context: List[Dict[str, Any]]) -> Dict[str, Any]:
-        """
-        Normalize source_references to proper format [{"document_name": str, "chunk_id": str, "quote": str}, ...]
-        Also normalizes type, priority, and list fields to prevent Pydantic validation errors.
-        """
-        # Normalize enums (type and priority) to match Pydantic Literal exact casing
-        if 'type' in case and isinstance(case['type'], str):
-            t = case['type'].lower()
-            if 'positive' in t: case['type'] = 'Positive'
-            elif 'negative' in t: case['type'] = 'Negative'
-            elif 'edge' in t: case['type'] = 'Edge Case'
-            elif 'validation' in t: case['type'] = 'Validation'
-            elif 'security' in t: case['type'] = 'Security'
-            
-        if 'priority' in case and isinstance(case['priority'], str):
-            p = case['priority'].lower()
-            if 'high' in p: case['priority'] = 'High'
-            elif 'medium' in p: case['priority'] = 'Medium'
-            elif 'low' in p: case['priority'] = 'Low'
-            
-        # Normalize list fields if they were output as a single string
-        for field in ['steps', 'preconditions']:
-            if field in case and isinstance(case[field], str):
-                case[field] = [s.strip('- *1234567890.') for s in case[field].split('\n') if s.strip()]
-
-        if 'source_references' not in case:
-            # Add default source reference from context if missing
-            if retrieved_context and len(retrieved_context) > 0:
-                case['source_references'] = [
-                    {
-                        'document_name': retrieved_context[0]['metadata'].get('document_name', 'Unknown'),
-                        'chunk_id': retrieved_context[0]['metadata'].get('chunk_id', 'unknown'),
-                        'quote': retrieved_context[0]['text'][:100]
-                    }
-                ]
-            else:
-                case['source_references'] = []
-            return case
-
-        source_refs = case['source_references']
-        
-        # If already a list of dicts with correct structure, keep it
-        if isinstance(source_refs, list) and len(source_refs) > 0:
-            if isinstance(source_refs[0], dict) and 'document_name' in source_refs[0]:
-                return case  # Already normalized
-        
-        # Try to recover if malformed (e.g., list of strings)
-        if isinstance(source_refs, list) and len(retrieved_context) > 0:
-            # Convert to proper dict format using context metadata
-            normalized = []
-            for i, ref in enumerate(source_refs[:1]):  # Use first context only
-                normalized.append({
-                    'document_name': retrieved_context[0]['metadata'].get('document_name', 'Unknown'),
-                    'chunk_id': retrieved_context[0]['metadata'].get('chunk_id', 'unknown'),
-                    'quote': str(ref)[:150] if ref else retrieved_context[0]['text'][:100]
-                })
-            case['source_references'] = normalized if normalized else [
-                {
-                    'document_name': retrieved_context[0]['metadata'].get('document_name', 'Unknown'),
-                    'chunk_id': retrieved_context[0]['metadata'].get('chunk_id', 'unknown'),
-                    'quote': retrieved_context[0]['text'][:100]
-                }
+    def _build_single_case_schema(self, test_types: List[str]) -> Dict[str, Any]:
+        return {
+            "type": "object",
+            "additionalProperties": False,
+            "properties": {
+                "title": {"type": "string", "minLength": 5},
+                "type": {"type": "string", "enum": test_types},
+                "priority": {"type": "string", "enum": self.ALLOWED_PRIORITIES},
+                "preconditions": {
+                    "type": "array",
+                    "minItems": 1,
+                    "items": {"type": "string", "minLength": 3}
+                },
+                "steps": {
+                    "type": "array",
+                    "minItems": 3,
+                    "items": {"type": "string", "minLength": 3}
+                },
+                "expected_result": {"type": "string", "minLength": 5},
+                "confidence": {"type": "number", "minimum": 0, "maximum": 1}
+            },
+            "required": [
+                "title", "type", "priority", "preconditions", "steps", "expected_result", "confidence"
             ]
-        
+        }
+
+    # ============================================================
+    # PARSING & NORMALIZATION
+    # ============================================================
+
+    def _parse_single_response(self, text: str) -> Dict[str, Any]:
+        cleaned_text = text.strip()
+        fence_match = re.search(r"```(?:json)?\s*([\s\S]*?)```", cleaned_text, flags=re.IGNORECASE)
+
+        if fence_match:
+            cleaned_text = fence_match.group(1).strip()
+
+        try:
+            data = json.loads(cleaned_text)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Invalid JSON returned: {cleaned_text[:200]}") from exc
+
+        if isinstance(data, list):
+            if not data:
+                raise ValueError("Model returned an empty list.")
+            data = data[0]
+
+        if not isinstance(data, dict):
+            raise ValueError("Model must return a JSON object.")
+
+        return data
+
+    def _normalize_case_fields(self, case: Dict[str, Any], allowed_test_types: List[str]) -> Dict[str, Any]:
+        normalized = dict(case)
+        normalized["title"] = str(case.get("title", "")).strip()
+        normalized["expected_result"] = str(case.get("expected_result", "")).strip()
+
+        normalized["type"] = self._infer_test_type(
+            requirement_text=str(case.get("_requirement_text", "")),
+            allowed_test_types=allowed_test_types,
+            model_type=case.get("type", ""),
+        )
+
+        prio_str = str(case.get("priority", "")).strip().capitalize()
+        normalized["priority"] = prio_str if prio_str in self.ALLOWED_PRIORITIES else "Medium"
+
+        normalized["preconditions"] = self._normalize_string_list(case.get("preconditions", []))
+        normalized["steps"] = self._normalize_string_list(case.get("steps", []))
+
+        try:
+            normalized["confidence"] = max(
+                0.0,
+                min(float(case.get("confidence", 0.9)), 1.0)
+            )
+        except (TypeError, ValueError):
+            normalized["confidence"] = 0.9
+
+        normalized.pop("_requirement_text", None)
+
+        return normalized
+
+    def _validate_contradiction(
+            self,
+            req_text: str,
+            expected_result: str
+    ) -> None:
+
+        req_lower = req_text.lower()
+        exp_lower = expected_result.lower()
+
+        rejection_requirement_patterns = [
+            "must not",
+            "must reject",
+            "not allow",
+            "must no longer",
+            "cannot",
+            "must be rejected",
+        ]
+
+        success_phrases = [
+            "successfully completes",
+            "successfully accepts",
+            "successfully allows",
+            "is accepted",
+            "is allowed",
+            "operation succeeds",
+        ]
+
+        requires_rejection = any(
+            pattern in req_lower
+            for pattern in rejection_requirement_patterns
+        )
+
+        indicates_success = any(
+            phrase in exp_lower
+            for phrase in success_phrases
+        )
+
+        if requires_rejection and indicates_success:
+            raise ValueError(
+                "Contradiction detected: requirement prohibits or rejects "
+                "the behavior, but expected_result indicates success."
+            )
+
+    def _validate_semantic_grounding(
+            self,
+            requirement_text: str,
+            case: Dict[str, Any],
+    ) -> None:
+
+        requirement = requirement_text.lower()
+
+        case_text = " ".join([
+            str(case.get("title", "")),
+            " ".join(case.get("preconditions", [])),
+            " ".join(case.get("steps", [])),
+            str(case.get("expected_result", "")),
+        ]).lower()
+
+        suspicious_behaviors = {
+            "log out": [
+                "log out",
+                "logout",
+                "logged out",
+            ],
+            "error message": [
+                "error message",
+                "error notification",
+                "displays an error",
+                "shows an error",
+            ],
+            "send email": [
+                "send email",
+                "email is sent",
+                "sent to the email",
+                "registered email address",
+                "retrieve the password reset link from",
+            ],
+            "login": [
+                "login page",
+                "log in",
+                "login succeeds",
+            ],
+            "redirect": [
+                "redirect",
+                "navigates to",
+            ],
+            "account creation": [
+                "create account",
+                "account is created",
+            ],
+        }
+
+        for behavior_name, phrases in suspicious_behaviors.items():
+            behavior_used = any(
+                phrase in case_text
+                for phrase in phrases
+            )
+
+            behavior_supported = any(
+                phrase in requirement
+                for phrase in phrases
+            )
+
+            if behavior_used and not behavior_supported:
+                raise ValueError(
+                    f"Semantic grounding failed: generated case introduces "
+                    f"unsupported behavior '{behavior_name}'."
+                )
+
+        # Detect valid-input / rejection contradictions.
+        positive_input_phrases = [
+            "meets the requirement",
+            "meets the requirements",
+            "valid password",
+            "valid value",
+            "same password",
+            "matching password",
+            "matches the new password",
+        ]
+
+        rejection_phrases = [
+            "reject",
+            "rejected",
+            "does not complete",
+            "not accepted",
+        ]
+
+        case_steps = " ".join(case.get("steps", [])).lower()
+        expected = str(case.get("expected_result", "")).lower()
+
+        uses_valid_input = any(
+            phrase in case_steps
+            for phrase in positive_input_phrases
+        )
+
+        expects_rejection = any(
+            phrase in expected
+            for phrase in rejection_phrases
+        )
+
+        if uses_valid_input and expects_rejection:
+            raise ValueError(
+                "Semantic grounding failed: test steps use valid or matching input "
+                "but expected_result describes rejection."
+            )
+
+        # Detect invalid-input / acceptance contradictions.
+        invalid_input_phrases = [
+            "does not match",
+            "different password",
+            "invalid password",
+            "invalid value",
+            "less than",
+            "below the minimum",
+            "missing",
+        ]
+
+        acceptance_phrases = [
+            "accepts",
+            "accepted",
+            "successfully",
+            "completes the operation",
+        ]
+
+        uses_invalid_input = any(
+            phrase in case_steps
+            for phrase in invalid_input_phrases
+        )
+
+        expects_acceptance = any(
+            phrase in expected
+            for phrase in acceptance_phrases
+        )
+
+        if uses_invalid_input and expects_acceptance:
+            raise ValueError(
+                "Semantic grounding failed: test steps use invalid or mismatching input "
+                "but expected_result describes acceptance."
+            )
+
+    def _attach_source_reference(
+            self,
+            case: Dict[str, Any],
+            context_item: Dict[str, Any],
+            chunk_index: int
+    ) -> Dict[str, Any]:
+
+        metadata = context_item.get("metadata", {}) or {}
+        document_name = str(metadata.get("document_name", "Unknown"))
+        quote = str(context_item.get("text", "")).strip()
+
+
+        case["source_references"] = [{
+            "document_name": document_name,
+            "chunk_id": f"R{chunk_index + 1}",
+            "quote": quote
+        }]
         return case
+
+    @staticmethod
+    def _normalize_string_list(value: Any) -> List[str]:
+        if isinstance(value, list):
+            raw_items = value
+
+        elif isinstance(value, str):
+            raw_items = re.split(r"\n+", value)
+
+        else:
+            return []
+
+        cleaned_items = []
+
+        for item in raw_items:
+            cleaned = re.sub(
+                r"^\s*(?:[-*•]|\d+[.)])\s*",
+                "",
+                str(item),
+            ).strip()
+
+            if not cleaned:
+                continue
+
+            # Remove malformed JSON artifacts accidentally emitted as steps.
+            if re.fullmatch(
+                    r"[\[\]\{\},:]+",
+                    cleaned,
+            ):
+                continue
+
+            if cleaned in {
+                "]",
+                "],",
+                "[",
+                "[,",
+                "}",
+                "},",
+            }:
+                continue
+
+            cleaned_items.append(cleaned)
+
+        return cleaned_items
+
+    def _prepare_test_types(self, test_types: List[str]) -> List[str]:
+        if not test_types:
+            return ["Positive", "Negative", "Edge Case"]
+
+        cleaned = [str(t).strip() for t in test_types if str(t).strip() in self.ALLOWED_TYPES]
+        cleaned = list(dict.fromkeys(cleaned))
+        return cleaned if cleaned else ["Positive", "Negative", "Edge Case"]
+
+    def _infer_test_type(
+            self,
+            requirement_text: str,
+            allowed_test_types: List[str],
+            model_type: Any = "",
+    ) -> str:
+        req = requirement_text.lower()
+
+        if any(
+                phrase in req
+                for phrase in [
+                    "must reject",
+                    "must not",
+                    "must no longer",
+                    "not allow",
+                    "cannot",
+                    "not associated",
+                ]
+        ):
+            preferred = "Negative"
+
+        elif any(
+                phrase in req
+                for phrase in [
+                    "valid format",
+                    "must contain",
+                    "must exactly match",
+                    "at least",
+                ]
+        ):
+            preferred = "Validation"
+
+        elif any(
+                phrase in req
+                for phrase in [
+                    "expire after",
+                    "expired",
+                    "boundary",
+                ]
+        ):
+            preferred = "Edge Case"
+
+        else:
+            preferred = "Positive"
+
+        if preferred in allowed_test_types:
+            return preferred
+
+        model_type_str = str(model_type).strip()
+
+        if model_type_str in allowed_test_types:
+            return model_type_str
+
+        return allowed_test_types[0]

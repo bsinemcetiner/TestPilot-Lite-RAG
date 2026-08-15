@@ -47,23 +47,18 @@ class TestCaseGenerator:
         if not isinstance(raw_cases, list):
             raw_cases = []
 
-
         validated_cases = []
+
         for idx, case in enumerate(raw_cases or [], 1):
-            case['id'] = idx
+            case["id"] = idx
+
             try:
                 validated = TestCaseSchema(**case)
                 validated_cases.append(validated.dict())
+
             except ValidationError as e:
-                # Print detailed validation error
-                error_details = []
-                for error in e.errors():
-                    field = '.'.join(str(x) for x in error['loc'])
-                    error_type = error['type']
-                    msg = error.get('msg', 'Unknown error')
-                    error_details.append(f"{field}: {msg}")
-                pass
-                # Skip this case - gap-filling will handle replacement
+                print(f"Validation failed for case {idx}: {e}")
+                continue
 
         validated_cases = (
             TestCaseGenerator._remove_duplicate_cases(
@@ -74,20 +69,20 @@ class TestCaseGenerator:
 
 
         # Fill gap: if we have fewer cases than requested, add category-distributed fallbacks
-        gap_filled_count = 0
-        if len(validated_cases) < num_cases:
-            missing_count = num_cases - len(validated_cases)
-            fallback_cases = TestCaseGenerator._create_distributed_fallback_cases(
-                feature_name=feature_name,
-                query=query,
-                retrieved_context=retrieved_context,
-                test_types=test_types,
-                count=missing_count,
-                start_index=len(validated_cases) + 1,
-                used_types=[case.get('type', 'Positive') for case in validated_cases],
-            )
-            gap_filled_count = len(fallback_cases)
-            validated_cases.extend(fallback_cases)
+        # gap_filled_count = 0
+        #if len(validated_cases) < num_cases:
+        #    missing_count = num_cases - len(validated_cases)
+        #    fallback_cases = TestCaseGenerator._create_distributed_fallback_cases(
+        #        feature_name=feature_name,
+        #        query=query,
+        #       retrieved_context=retrieved_context,
+        #        test_types=test_types,
+        #        count=missing_count,
+        #        start_index=len(validated_cases) + 1,
+        #        used_types=[case.get('type', 'Positive') for case in validated_cases],
+        #    )
+        #    gap_filled_count = len(fallback_cases)
+        #    validated_cases.extend(fallback_cases)
 
 
 
@@ -102,18 +97,10 @@ class TestCaseGenerator:
                 parts = test_case["title"].rsplit(" - Case ", 1)
                 test_case["title"] = f"{parts[0]} - Case {index}"
 
-
-
         if not validated_cases:
-            validated_cases = [
-                TestCaseGenerator._build_fallback_case(
-                    feature_name=feature_name,
-                    test_type=test_types[0] if test_types else 'Positive',
-                    index=1,
-                    retrieved_context=retrieved_context,
-                    query=query,
-                )
-            ]
+            raise ValueError(
+                "LLM returned no valid test cases after schema validation."
+            )
 
         return validated_cases, used_provider
 

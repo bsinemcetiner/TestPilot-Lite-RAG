@@ -77,8 +77,9 @@ function GenerateTests({ onOpenResults }: GenerateTestsProps) {
 
   const [history, setHistory] = useState<BackendHistoryItem[]>([]);
 
-  const [duplicateItem, setDuplicateItem] =
-    useState<BackendHistoryItem | null>(null);
+  const [duplicateItem, setDuplicateItem] = useState<BackendHistoryItem | null>(
+    null,
+  );
   const [showPageHelp, setShowPageHelp] = useState(false);
 
   const [pendingGeneration, setPendingGeneration] =

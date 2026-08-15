@@ -153,12 +153,18 @@ export async function getHistoryDetail(id: string): Promise<any> {
 }
 
 export async function deleteHistory(id: string): Promise<void> {
-  const response = await fetch(`${API_BASE}/history/${id}`, { method: "DELETE" });
+  const response = await fetch(`${API_BASE}/history/${id}`, {
+    method: "DELETE",
+  });
   if (!response.ok) throw new Error("Failed to delete history");
 }
 
-export async function togglePinHistory(id: string): Promise<{ is_pinned: boolean }> {
-  const response = await fetch(`${API_BASE}/history/${id}/pin`, { method: "PATCH" });
+export async function togglePinHistory(
+  id: string,
+): Promise<{ is_pinned: boolean }> {
+  const response = await fetch(`${API_BASE}/history/${id}/pin`, {
+    method: "PATCH",
+  });
   if (!response.ok) throw new Error("Failed to toggle pin");
   return response.json();
 }
@@ -200,4 +206,23 @@ export async function generateTestCases(
   }
 
   return response.json();
+}
+
+export async function deleteDocument(documentId: number): Promise<void> {
+  const response = await fetch(`${API_BASE}/documents/${documentId}`, {
+    method: "DELETE",
+  });
+
+  if (!response.ok) {
+    let detail = "Document deletion failed.";
+
+    try {
+      const data = await response.json();
+      detail = data.detail || detail;
+    } catch {
+      // Keep default error message.
+    }
+
+    throw new Error(detail);
+  }
 }

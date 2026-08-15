@@ -73,3 +73,31 @@ def get_chunk_count(db: Session, doc_id: int) -> int:
 def get_document_chunks(db: Session, doc_id: int):
     """Get all chunks for a document."""
     return db.query(Chunk).filter(Chunk.document_id == doc_id).order_by(Chunk.chunk_index).all()
+
+def delete_document(db: Session, doc_id: int) -> bool:
+    """Delete a document and all of its indexed chunks."""
+
+    document = (
+        db.query(Document)
+        .filter(Document.id == doc_id)
+        .first()
+    )
+
+    if not document:
+        return False
+
+    # Remove vectors from ChromaDB
+    VectorStoreService.delete_document_chunks(doc_id)
+
+    # Remove chunks from relational database
+    (
+        db.query(Chunk)
+        .filter(Chunk.document_id == doc_id)
+        .delete(synchronize_session=False)
+    )
+
+    # Remove document itself
+    db.delete(document)
+    db.commit()
+
+    return True

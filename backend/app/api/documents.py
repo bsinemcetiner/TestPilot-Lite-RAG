@@ -12,6 +12,7 @@ from app.services.document_service import (
     get_documents,
     get_chunk_count,
     get_document_chunks,
+    delete_document,
 )
 
 router = APIRouter()
@@ -90,3 +91,24 @@ def get_doc_chunk_count(doc_id: int, db: Session = Depends(get_db)):
     """Get chunk count for a document."""
     count = get_chunk_count(db, doc_id)
     return {"chunk_count": count}
+
+@router.delete("/documents/{doc_id}")
+def remove_document(
+    doc_id: int,
+    db: Session = Depends(get_db),
+):
+    deleted = delete_document(
+        db=db,
+        doc_id=doc_id,
+    )
+
+    if not deleted:
+        raise HTTPException(
+            status_code=404,
+            detail="Document not found.",
+        )
+
+    return {
+        "status": "deleted",
+        "document_id": doc_id,
+    }

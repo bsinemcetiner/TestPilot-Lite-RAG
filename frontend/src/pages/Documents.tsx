@@ -12,11 +12,13 @@ import {
   Info,
   Layers3,
   LoaderCircle,
+  Trash2,
   UploadCloud,
   X,
 } from "lucide-react";
 
 import {
+  deleteDocument,
   DocumentRecord,
   getChunkCount,
   getDocuments,
@@ -51,6 +53,9 @@ function InfoTooltip({ text }: { text: string }) {
 }
 
 function Documents() {
+  const [deletingDocumentId, setDeletingDocumentId] = useState<number | null>(
+    null,
+  );
   const [documents, setDocuments] = useState<DocumentWithChunks[]>([]);
   const [loading, setLoading] = useState(false);
   const [loadingDocuments, setLoadingDocuments] = useState(false);
@@ -189,6 +194,39 @@ function Documents() {
     setIsDragging(false);
 
     setSelectedFile(event.dataTransfer.files?.[0] ?? null);
+  };
+
+  const handleDeleteDocument = async (doc: DocumentWithChunks) => {
+    const confirmed = window.confirm(
+      `Delete "${doc.name}"?\n\nThis will also remove its indexed chunks from the knowledge base.`,
+    );
+
+    if (!confirmed) {
+      return;
+    }
+
+    setDeletingDocumentId(doc.id);
+    setMessage("");
+    setIsError(false);
+
+    try {
+      await deleteDocument(doc.id);
+
+      setDocuments((current) =>
+        current.filter((document) => document.id !== doc.id),
+      );
+
+      setMessage(`Document "${doc.name}" was deleted successfully.`);
+      setIsError(false);
+    } catch (error) {
+      const errorMessage =
+        error instanceof Error ? error.message : "Document deletion failed.";
+
+      setMessage(errorMessage);
+      setIsError(true);
+    } finally {
+      setDeletingDocumentId(null);
+    }
   };
 
   const handleSubmit = async (event: FormEvent) => {
@@ -559,6 +597,7 @@ function Documents() {
                   <th>Source type</th>
                   <th>Chunks</th>
                   <th>Created</th>
+                  <th>Actions</th>
                 </tr>
               </thead>
 
@@ -588,6 +627,28 @@ function Documents() {
                     </td>
 
                     <td>{new Date(doc.created_at).toLocaleString()}</td>
+                    <td>
+                      <button
+                        type="button"
+                        className="document-delete-button"
+                        onClick={() => void handleDeleteDocument(doc)}
+                        disabled={deletingDocumentId === doc.id}
+                        aria-label={`Delete ${doc.name}`}
+                        title={`Delete ${doc.name}`}
+                      >
+                        {deletingDocumentId === doc.id ? (
+                          <LoaderCircle className="button-spinner" size={17} />
+                        ) : (
+                          <Trash2 size={17} />
+                        )}
+
+                        <span>
+                          {deletingDocumentId === doc.id
+                            ? "Deleting..."
+                            : "Delete"}
+                        </span>
+                      </button>
+                    </td>
                   </tr>
                 ))}
               </tbody>

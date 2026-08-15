@@ -106,7 +106,7 @@ def generate_test_cases(request: GenerationRequest, db: Session = Depends(get_db
 
         retrieved = RAGService.retrieve_context(
             retrieval_query,
-            n_results=10,
+            n_results=50,
         )
 
         if not retrieved:
@@ -159,74 +159,76 @@ def generate_test_cases(request: GenerationRequest, db: Session = Depends(get_db
             num_cases=request.num_cases,
             provider_name=request.provider,
         )
-
         requirements: List[str] = []
-
         chunk_texts: List[str] = []
 
         for chunk in retrieved:
             chunk_text = get_chunk_text(chunk)
-
             if chunk_text:
                 chunk_texts.append(chunk_text)
 
-
+        # ---------------------------------------------------------
+        # 1. JSON documents
+        # ---------------------------------------------------------
         for chunk_text in chunk_texts:
             try:
                 parsed_chunk = json.loads(chunk_text)
             except (json.JSONDecodeError, TypeError):
-                continue
+                parsed_chunk = None
 
-            if not isinstance(parsed_chunk, dict):
-                continue
+            if isinstance(parsed_chunk, dict):
+                chunk_requirements = parsed_chunk.get("requirements", [])
 
-            chunk_requirements = parsed_chunk.get("requirements", [])
+                if isinstance(chunk_requirements, list):
+                    requirements.extend(
+                        str(requirement).strip()
+                        for requirement in chunk_requirements
+                        if isinstance(requirement, str)
+                        and requirement.strip()
+                    )
 
-            if isinstance(chunk_requirements, list):
-                requirements.extend(
-                    str(requirement).strip()
-                    for requirement in chunk_requirements
-                    if isinstance(requirement, str)
-                    and requirement.strip()
-                )
+                elif isinstance(chunk_requirements, str):
+                    if chunk_requirements.strip():
+                        requirements.append(
+                            chunk_requirements.strip()
+                        )
 
-            elif isinstance(chunk_requirements, str):
-                if chunk_requirements.strip():
-                    requirements.append(chunk_requirements.strip())
-
-
+        # ---------------------------------------------------------
+        # 2. TXT / MD numbered requirements
+        #
+        # Supports BOTH:
+        #
+        # 1. Requirement one
+        # 2. Requirement two
+        #
+        # and:
+        #
+        # 1. Requirement one 2. Requirement two 3. Requirement three
+        # ---------------------------------------------------------
         if not requirements:
-            combined_chunk_text = "\n".join(chunk_texts)
+            combined_text = "\n".join(chunk_texts)
 
-            requirements_start = re.search(
-                r'"requirements"\s*:\s*\[',
-                combined_chunk_text,
-                flags=re.IGNORECASE,
+            numbered_matches = re.findall(
+                r"(?:^|\s)(\d+)[.)]\s+"
+                r"(.*?)"
+                r"(?=(?:\s+\d+[.)]\s+)|$)",
+                combined_text,
+                flags=re.DOTALL,
             )
 
-            if requirements_start:
-                requirements_section = combined_chunk_text[
-                    requirements_start.end():
-                ]
+            for _, requirement_text in numbered_matches:
+                cleaned = re.sub(
+                    r"\s+",
+                    " ",
+                    requirement_text,
+                ).strip()
 
-                # Dizinin kapanışına kadar olan bölümü kullan.
-                closing_bracket = requirements_section.find("]")
+                if len(cleaned) >= 8:
+                    requirements.append(cleaned)
 
-                if closing_bracket != -1:
-                    requirements_section = requirements_section[:closing_bracket]
-
-                extracted_values = re.findall(
-                    r'"((?:\\.|[^"\\])*)"',
-                    requirements_section,
-                )
-
-                requirements.extend(
-                    value.replace('\\"', '"').strip()
-                    for value in extracted_values
-                    if value.strip()
-                )
-
-
+        # ---------------------------------------------------------
+        # 3. Bullet-list fallback
+        # ---------------------------------------------------------
         if not requirements:
             for chunk_text in chunk_texts:
                 for line in chunk_text.splitlines():
@@ -235,17 +237,47 @@ def generate_test_cases(request: GenerationRequest, db: Session = Depends(get_db
                     if not stripped:
                         continue
 
-                    if re.match(r"^([-*•]|\d+[.)])\s+", stripped):
-                        cleaned_line = re.sub(
-                            r"^([-*•]|\d+[.)])\s+",
+                    if re.match(r"^[-*•]\s+", stripped):
+                        cleaned = re.sub(
+                            r"^[-*•]\s+",
                             "",
                             stripped,
                         ).strip()
 
-                        if len(cleaned_line) >= 8:
-                            requirements.append(cleaned_line)
+                        if len(cleaned) >= 8:
+                            requirements.append(cleaned)
 
+        # ---------------------------------------------------------
+        # 4. Last-resort sentence fallback
+        # ---------------------------------------------------------
+        if not requirements:
+            combined_text = " ".join(chunk_texts)
 
+            for part in re.split(
+                r"(?<=[.!?])\s+",
+                combined_text,
+            ):
+                cleaned = re.sub(
+                    r"\s+",
+                    " ",
+                    part,
+                ).strip()
+
+                lower = cleaned.lower()
+
+                if (
+                    len(cleaned) >= 8
+                    and lower not in {
+                        "requirements",
+                        "password reset requirements",
+                        "login requirements",
+                    }
+                ):
+                    requirements.append(cleaned)
+
+        # ---------------------------------------------------------
+        # Clean + deduplicate
+        # ---------------------------------------------------------
         cleaned_requirements: List[str] = []
         seen_requirements: set[str] = set()
 
@@ -256,64 +288,25 @@ def generate_test_cases(request: GenerationRequest, db: Session = Depends(get_db
                 requirement,
             ).strip(" -•\t\r\n\"'[]{}")
 
-            lower = normalized.lower()
-
             if len(normalized) < 8:
                 continue
-
-
-            if (
-                lower.startswith("generate comprehensive")
-                or lower.startswith("generate test cases")
-                or lower.startswith("create test cases")
-                or lower.startswith("write test cases")
-            ):
-                continue
-
-
-            duplicate_email_phrases = [
-                "duplicate email",
-                "already registered email",
-                "email already registered",
-                "email is already registered",
-                "email already exists",
-                "email address already exists",
-                "email address is already registered",
-            ]
-
-            if any(
-                phrase in lower
-                for phrase in duplicate_email_phrases
-            ):
-                normalized = "Duplicate email addresses must be rejected."
-                lower = normalized.lower()
 
             signature = re.sub(
                 r"[^a-z0-9]+",
                 " ",
-                lower,
+                normalized.lower(),
             ).strip()
 
-            if not signature or signature in seen_requirements:
+            if not signature:
+                continue
+
+            if signature in seen_requirements:
                 continue
 
             seen_requirements.add(signature)
             cleaned_requirements.append(normalized)
 
         requirements = cleaned_requirements
-
-        if not requirements:
-            seen_fb = set()
-            for t in chunk_texts:
-                for line in t.splitlines():
-                    for part in re.split(r'[.!?]+', line):
-                        cleaned = re.sub(r"^(#+|[-*•]|\d+[.)])\s+", "", part.strip()).strip()
-                        lower_c = cleaned.lower()
-                        
-                        if len(cleaned) > 8 and lower_c not in ("login requirements", "requirements"):
-                            if lower_c not in seen_fb:
-                                seen_fb.add(lower_c)
-                                requirements.append(cleaned)
 
         evaluation = EvaluationService.evaluate_test_cases(
             test_cases=test_cases,
